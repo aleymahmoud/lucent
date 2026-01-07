@@ -1,0 +1,38 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(py:*)",
+      "Bash(systeminfo:*)",
+      "Bash(findstr:*)",
+      "Bash(ver:*)",
+      "Bash(where:*)",
+      "Bash(node --version:*)",
+      "Bash(npm --version:*)",
+      "Bash(winget:*)",
+      "Bash(npx create-next-app:*)",
+      "Bash(npx shadcn@latest init:*)",
+      "Bash(npx shadcn@latest add:*)",
+      "Bash(npm install:*)",
+      "Bash(npm run dev:*)",
+      "Bash(taskkill:*)",
+      "Bash(touch:*)",
+      "Bash(python -m pip install:*)",
+      "Bash(curl:*)",
+      "Bash(powershell.exe -ExecutionPolicy Bypass -File install-python311.ps1)",
+      "Bash(./install-python311-simple.bat)",
+      "Bash(powershell.exe -ExecutionPolicy Bypass -File install-winpython311.ps1)",
+      "Bash(./python311-installer.exe /passive InstallAllUsers=0 PrependPath=1 Include_pip=1 Include_tcltk=1 CompileAll=0)",
+      "Bash(powershell.exe:*)",
+      "Bash(./fix-group-policy.bat)",
+      "Bash(pip install:*)",
+      "Bash(python -m uvicorn:*)",
+      "Bash(python -m alembic:*)",
+      "Bash(python test_auth.py:*)",
+      "Bash(python -m json.tool:*)",
+      "Bash(python:*)",
+      "Bash(git add:*)",
+      "Bash(del nul)",
+      "Bash(rm:*)"
+    ]
+  }
+}

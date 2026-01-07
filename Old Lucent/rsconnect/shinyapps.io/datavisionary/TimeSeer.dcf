@@ -1,0 +1,13 @@
+name: TimeSeer
+title: TimeSeer
+username: datavisionary
+account: datavisionary
+server: shinyapps.io
+hostUrl: https://api.shinyapps.io/v1
+appId: 14261921
+bundleId: 10157058
+url: https://datavisionary.shinyapps.io/TimeSeer/
+version: 1
+asMultiple: FALSE
+asStatic: FALSE
+ignoredFiles: .RData|app0.R|TimeSeer.txt
