@@ -43,6 +43,7 @@ class Tenant(Base):
     audit_logs = relationship("AuditLog", back_populates="tenant", cascade="all, delete-orphan")
     usage_stats = relationship("UsageStat", back_populates="tenant", cascade="all, delete-orphan")
     forecast_histories = relationship("ForecastHistory", back_populates="tenant", cascade="all, delete-orphan")
+    user_groups = relationship("UserGroup", back_populates="tenant", cascade="all, delete-orphan")
 
     def __repr__(self):
         return f"<Tenant(id={self.id}, name={self.name}, slug={self.slug})>"

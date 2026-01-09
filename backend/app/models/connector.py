@@ -51,6 +51,7 @@ class Connector(Base):
     # Relationships
     tenant = relationship("Tenant", back_populates="connectors")
     creator = relationship("User", back_populates="created_connectors", foreign_keys=[created_by])
+    rls_config = relationship("ConnectorRLS", back_populates="connector", uselist=False, cascade="all, delete-orphan")
 
     def __repr__(self):
         return f"<Connector(id={self.id}, name={self.name}, type={self.type})>"

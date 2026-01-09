@@ -12,7 +12,7 @@ from app.db.database import Base
 
 
 class UserRole(str, enum.Enum):
-    ADMIN = "admin"
+    ADMIN = "admin"              # Tenant admin (manages users within tenant)
     ANALYST = "analyst"
     VIEWER = "viewer"
 
@@ -43,6 +43,7 @@ class User(Base):
 
     # Status
     is_active = Column(Boolean, default=True, index=True)
+    is_approved = Column(Boolean, default=False, index=True)  # Requires admin approval
 
     # Relationships
     tenant = relationship("Tenant", back_populates="users")
@@ -50,6 +51,7 @@ class User(Base):
     audit_logs = relationship("AuditLog", back_populates="user")
     usage_stats = relationship("UsageStat", back_populates="user")
     forecast_histories = relationship("ForecastHistory", back_populates="user")
+    group_memberships = relationship("UserGroupMembership", back_populates="user", cascade="all, delete-orphan")
 
     def __repr__(self):
         return f"<User(id={self.id}, email={self.email}, role={self.role})>"

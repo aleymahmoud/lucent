@@ -35,8 +35,12 @@ export default function RegisterPage() {
       localStorage.setItem("token", response.access_token);
       localStorage.setItem("user", JSON.stringify(response.user));
 
-      // Redirect to dashboard
-      router.push("/lucent/dashboard");
+      // Redirect to tenant-specific dashboard
+      if (response.user.tenant_slug) {
+        router.push(`/${response.user.tenant_slug}/dashboard`);
+      } else {
+        setError("Unable to determine your organization. Please contact support.");
+      }
     } catch (err: any) {
       setError(err.response?.data?.detail || "Registration failed. Please try again.");
     } finally {
@@ -127,7 +131,7 @@ export default function RegisterPage() {
 
             <div className="text-sm text-center text-gray-600">
               Already have an account?{" "}
-              <Link href="/lucent/login" className="text-blue-600 hover:underline">
+              <Link href="/login" className="text-blue-600 hover:underline">
                 Sign in
               </Link>
             </div>

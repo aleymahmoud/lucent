@@ -19,7 +19,7 @@ apiClient.interceptors.request.use(
   (config) => {
     // Get token from localStorage or session
     if (typeof window !== 'undefined') {
-      const token = localStorage.getItem('auth_token');
+      const token = localStorage.getItem('token');
       if (token) {
         config.headers.Authorization = `Bearer ${token}`;
       }
@@ -45,8 +45,9 @@ apiClient.interceptors.response.use(
         case 401:
           // Unauthorized - redirect to login
           if (typeof window !== 'undefined') {
-            localStorage.removeItem('auth_token');
-            window.location.href = '/login';
+            localStorage.removeItem('token');
+            localStorage.removeItem('user');
+            window.location.href = '/lucent/login';
           }
           break;
         case 403:
@@ -83,8 +84,8 @@ apiClient.interceptors.response.use(
 export const api = {
   // Generic GET request
   get: async <T>(url: string, config?: AxiosRequestConfig): Promise<T> => {
-    const response = await apiClient.get<ApiResponse<T>>(url, config);
-    return response.data.data;
+    const response = await apiClient.get<T>(url, config);
+    return response.data;
   },
 
   // Generic POST request
@@ -93,8 +94,8 @@ export const api = {
     data?: D,
     config?: AxiosRequestConfig
   ): Promise<T> => {
-    const response = await apiClient.post<ApiResponse<T>>(url, data, config);
-    return response.data.data;
+    const response = await apiClient.post<T>(url, data, config);
+    return response.data;
   },
 
   // Generic PUT request
@@ -103,14 +104,14 @@ export const api = {
     data?: D,
     config?: AxiosRequestConfig
   ): Promise<T> => {
-    const response = await apiClient.put<ApiResponse<T>>(url, data, config);
-    return response.data.data;
+    const response = await apiClient.put<T>(url, data, config);
+    return response.data;
   },
 
   // Generic DELETE request
   delete: async <T>(url: string, config?: AxiosRequestConfig): Promise<T> => {
-    const response = await apiClient.delete<ApiResponse<T>>(url, config);
-    return response.data.data;
+    const response = await apiClient.delete<T>(url, config);
+    return response.data;
   },
 
   // File upload
@@ -122,7 +123,7 @@ export const api = {
     const formData = new FormData();
     formData.append('file', file);
 
-    const response = await apiClient.post<ApiResponse<T>>(url, formData, {
+    const response = await apiClient.post<T>(url, formData, {
       headers: {
         'Content-Type': 'multipart/form-data',
       },
@@ -136,7 +137,7 @@ export const api = {
       },
     });
 
-    return response.data.data;
+    return response.data;
   },
 
   // Download file

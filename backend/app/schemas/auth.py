@@ -33,7 +33,10 @@ class UserResponse(BaseModel):
     full_name: Optional[str] = None
     role: str
     tenant_id: str
+    tenant_slug: Optional[str] = None
     is_active: bool
+    is_approved: bool
+    is_super_admin: bool = False
     created_at: datetime
     last_login: Optional[datetime] = None
 

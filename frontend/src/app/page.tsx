@@ -1,6 +1,6 @@
 import { redirect } from 'next/navigation';
 
 export default function Home() {
-  // Redirect to dashboard (basePath /lucent is automatically prepended)
-  redirect('/dashboard');
+  // Redirect to login - authenticated users will be redirected to their tenant dashboard
+  redirect('/login');
 }
