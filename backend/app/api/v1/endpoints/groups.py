@@ -7,7 +7,7 @@ from sqlalchemy import select, func, delete
 from sqlalchemy.orm import selectinload
 from typing import Optional, List
 
-from app.core.deps import get_db, get_current_admin
+from app.core.deps import get_db, get_current_tenant_admin
 from app.models import User, UserRole, UserGroup, UserGroupMembership
 from app.schemas.groups import (
     GroupCreate,
@@ -30,7 +30,7 @@ router = APIRouter()
 
 @router.get("", response_model=GroupListResponse)
 async def list_groups(
-    current_user: User = Depends(get_current_admin),
+    current_user: User = Depends(get_current_tenant_admin),
     db: AsyncSession = Depends(get_db),
     skip: int = Query(0, ge=0),
     limit: int = Query(50, ge=1, le=100),
@@ -91,7 +91,7 @@ async def list_groups(
 @router.post("", response_model=GroupResponse, status_code=status.HTTP_201_CREATED)
 async def create_group(
     group_data: GroupCreate,
-    current_user: User = Depends(get_current_admin),
+    current_user: User = Depends(get_current_tenant_admin),
     db: AsyncSession = Depends(get_db)
 ):
     """Create a new user group in the current tenant (Tenant Admin only)"""
@@ -137,7 +137,7 @@ async def create_group(
 @router.get("/{group_id}", response_model=GroupDetailResponse)
 async def get_group(
     group_id: str,
-    current_user: User = Depends(get_current_admin),
+    current_user: User = Depends(get_current_tenant_admin),
     db: AsyncSession = Depends(get_db)
 ):
     """Get a specific user group with members (Tenant Admin only)"""
@@ -184,7 +184,7 @@ async def get_group(
 async def update_group(
     group_id: str,
     group_data: GroupUpdate,
-    current_user: User = Depends(get_current_admin),
+    current_user: User = Depends(get_current_tenant_admin),
     db: AsyncSession = Depends(get_db)
 ):
     """Update a user group (Tenant Admin only)"""
@@ -245,7 +245,7 @@ async def update_group(
 @router.delete("/{group_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_group(
     group_id: str,
-    current_user: User = Depends(get_current_admin),
+    current_user: User = Depends(get_current_tenant_admin),
     db: AsyncSession = Depends(get_db)
 ):
     """Delete a user group (Tenant Admin only)"""
@@ -273,7 +273,7 @@ async def delete_group(
 async def add_group_member(
     group_id: str,
     member_data: AddGroupMember,
-    current_user: User = Depends(get_current_admin),
+    current_user: User = Depends(get_current_tenant_admin),
     db: AsyncSession = Depends(get_db)
 ):
     """Add a single member to a group (Tenant Admin only)"""
@@ -331,7 +331,7 @@ async def add_group_member(
 async def add_group_members_bulk(
     group_id: str,
     members_data: AddGroupMembers,
-    current_user: User = Depends(get_current_admin),
+    current_user: User = Depends(get_current_tenant_admin),
     db: AsyncSession = Depends(get_db)
 ):
     """Add multiple members to a group (Tenant Admin only)"""
@@ -397,7 +397,7 @@ async def add_group_members_bulk(
 async def remove_group_member(
     group_id: str,
     user_id: str,
-    current_user: User = Depends(get_current_admin),
+    current_user: User = Depends(get_current_tenant_admin),
     db: AsyncSession = Depends(get_db)
 ):
     """Remove a member from a group (Tenant Admin only)"""
@@ -440,7 +440,7 @@ async def remove_group_member(
 @router.delete("/{group_id}/members", response_model=GroupMembershipResponse)
 async def remove_all_group_members(
     group_id: str,
-    current_user: User = Depends(get_current_admin),
+    current_user: User = Depends(get_current_tenant_admin),
     db: AsyncSession = Depends(get_db)
 ):
     """Remove all members from a group (Tenant Admin only)"""

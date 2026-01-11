@@ -1,0 +1,77 @@
+# Environment files
+.env
+.env.local
+.env.*.local
+*.env
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+venv/
+.venv/
+
+# Node.js
+node_modules/
+.npm
+.yarn
+
+# Next.js
+.next/
+out/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+logs/
+
+# Temp files
+temp/
+tmp/
+nul
+
+# Database
+*.db
+*.sqlite
+
+# Uploads
+uploads/
+
+# Claude settings (local)
+.claude/settings.local.json
+
+# Test coverage
+coverage/
+.coverage
+htmlcov/
+
+# Build artifacts
+*.pyc
+*.pyo

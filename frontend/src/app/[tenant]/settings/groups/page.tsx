@@ -86,7 +86,7 @@ export default function GroupsPage() {
 
   // Check if user is admin
   useEffect(() => {
-    if (user && user.role !== "admin" && !user.is_super_admin) {
+    if (user && user.role !== "admin" ) {
       router.push(`/${tenantSlug}/dashboard`);
     }
   }, [user, router, tenantSlug]);
@@ -250,7 +250,7 @@ export default function GroupsPage() {
     : allUsers;
 
   // Don't render if not admin
-  if (user && user.role !== "admin" && !user.is_super_admin) {
+  if (user && user.role !== "admin" ) {
     return null;
   }
 

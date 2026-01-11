@@ -7,7 +7,7 @@ from sqlalchemy import select, func
 from sqlalchemy.orm import selectinload
 from typing import Optional
 
-from app.core.deps import get_db, get_current_admin, get_current_user
+from app.core.deps import get_db, get_current_tenant_admin, get_current_user
 from app.models import User, Connector, ConnectorRLS
 from app.schemas.connectors import (
     ConnectorRLSCreate,
@@ -28,7 +28,7 @@ router = APIRouter()
 
 @router.get("", response_model=ConnectorListResponse)
 async def list_connectors(
-    current_user: User = Depends(get_current_admin),
+    current_user: User = Depends(get_current_tenant_admin),
     db: AsyncSession = Depends(get_db),
     skip: int = Query(0, ge=0),
     limit: int = Query(50, ge=1, le=100),
@@ -95,7 +95,7 @@ async def list_connectors(
 @router.get("/{connector_id}", response_model=ConnectorBasicResponse)
 async def get_connector(
     connector_id: str,
-    current_user: User = Depends(get_current_admin),
+    current_user: User = Depends(get_current_tenant_admin),
     db: AsyncSession = Depends(get_db)
 ):
     """Get a specific connector with RLS config (Tenant Admin only)"""
@@ -142,7 +142,7 @@ async def get_connector(
 @router.get("/{connector_id}/rls", response_model=ConnectorRLSResponse)
 async def get_connector_rls(
     connector_id: str,
-    current_user: User = Depends(get_current_admin),
+    current_user: User = Depends(get_current_tenant_admin),
     db: AsyncSession = Depends(get_db)
 ):
     """Get RLS configuration for a connector (Tenant Admin only)"""
@@ -183,7 +183,7 @@ async def get_connector_rls(
 async def create_connector_rls(
     connector_id: str,
     rls_data: ConnectorRLSCreate,
-    current_user: User = Depends(get_current_admin),
+    current_user: User = Depends(get_current_tenant_admin),
     db: AsyncSession = Depends(get_db)
 ):
     """Create RLS configuration for a connector (Tenant Admin only)"""
@@ -234,7 +234,7 @@ async def create_connector_rls(
 async def update_connector_rls(
     connector_id: str,
     rls_data: ConnectorRLSUpdate,
-    current_user: User = Depends(get_current_admin),
+    current_user: User = Depends(get_current_tenant_admin),
     db: AsyncSession = Depends(get_db)
 ):
     """Update RLS configuration for a connector (Tenant Admin only)"""
@@ -282,7 +282,7 @@ async def update_connector_rls(
 @router.delete("/{connector_id}/rls", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_connector_rls(
     connector_id: str,
-    current_user: User = Depends(get_current_admin),
+    current_user: User = Depends(get_current_tenant_admin),
     db: AsyncSession = Depends(get_db)
 ):
     """Delete RLS configuration for a connector (Tenant Admin only)"""
@@ -316,7 +316,7 @@ async def delete_connector_rls(
 @router.put("/{connector_id}/rls/toggle", response_model=ConnectorRLSResponse)
 async def toggle_connector_rls(
     connector_id: str,
-    current_user: User = Depends(get_current_admin),
+    current_user: User = Depends(get_current_tenant_admin),
     db: AsyncSession = Depends(get_db)
 ):
     """Toggle RLS enabled/disabled for a connector (Tenant Admin only)"""
@@ -365,7 +365,7 @@ async def toggle_connector_rls(
 @router.get("/{connector_id}/columns", response_model=ConnectorColumnsResponse)
 async def get_connector_columns(
     connector_id: str,
-    current_user: User = Depends(get_current_admin),
+    current_user: User = Depends(get_current_tenant_admin),
     db: AsyncSession = Depends(get_db)
 ):
     """Get column names from a connector's data source (Tenant Admin only)"""

@@ -43,11 +43,42 @@ apiClient.interceptors.response.use(
 
       switch (status) {
         case 401:
-          // Unauthorized - redirect to login
+          // Unauthorized - redirect to tenant login
           if (typeof window !== 'undefined') {
+            // Get tenant from stored user or URL
+            const storedUser = localStorage.getItem('user');
+            let tenantSlug = null;
+
+            if (storedUser) {
+              try {
+                const user = JSON.parse(storedUser);
+                tenantSlug = user.tenant_slug;
+              } catch (e) {
+                // Ignore parse errors
+              }
+            }
+
+            // Fallback: try to get tenant from current URL
+            if (!tenantSlug) {
+              const pathParts = window.location.pathname.split('/');
+              // URL structure: /lucent/{tenant}/... or /{tenant}/...
+              if (pathParts[1] === 'lucent' && pathParts[2] && pathParts[2] !== 'login' && pathParts[2] !== 'admin') {
+                tenantSlug = pathParts[2];
+              } else if (pathParts[1] && pathParts[1] !== 'lucent' && pathParts[1] !== 'login' && pathParts[1] !== 'admin') {
+                tenantSlug = pathParts[1];
+              }
+            }
+
             localStorage.removeItem('token');
             localStorage.removeItem('user');
-            window.location.href = '/lucent/login';
+
+            // Redirect to tenant login or platform login (include basePath)
+            const basePath = '/lucent';
+            if (tenantSlug) {
+              window.location.href = `${basePath}/${tenantSlug}/login`;
+            } else {
+              window.location.href = `${basePath}/login`;
+            }
           }
           break;
         case 403:

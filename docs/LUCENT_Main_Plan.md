@@ -2657,11 +2657,22 @@ is_super_admin = Column(Boolean, default=False, index=True)
 
 ## 📊 Project Status
 
-**Last Updated:** 2026-01-09
-**Current Phase:** Phase 2.8 - Platform Admin Separation (In Progress)
-**Frontend Status:** ✅ Running at http://localhost:3000
-**Backend Status:** ✅ Running at http://localhost:8001
-**Overall Progress:** ~55% of total project
+**Last Updated:** 2026-01-11
+**Current Phase:** Phase 3 Complete - Data Module
+**Frontend Status:** ✅ Running at http://localhost:3001
+**Backend Status:** ✅ Running at http://localhost:8000
+**Overall Progress:** ~75% of total project
+
+**Phase 3 Progress:**
+- ✅ Phase 3.1: Dataset Model & Schema - COMPLETE
+- ✅ Phase 3.2: Data Validation Service - COMPLETE
+- ✅ Phase 3.3: File Upload API - COMPLETE
+- ✅ Phase 3.4: Dataset Endpoints (preview, summary, structure) - COMPLETE
+- ✅ Phase 3.5: File Upload UI (drag & drop) - COMPLETE
+- ✅ Phase 3.6: Data Preview Table - COMPLETE
+- ✅ Phase 3.7: Data Summary Statistics - COMPLETE
+- ✅ Phase 3.8: Sample Data Loader - COMPLETE
+- ✅ Phase 3.9: Template Download - COMPLETE
 
 **Phase 2 Progress:**
 - ✅ Phase 2.1: Database Models & Migrations - COMPLETE
@@ -2671,7 +2682,8 @@ is_super_admin = Column(Boolean, default=False, index=True)
 - ✅ Phase 2.5: Frontend - Tenant Admin Panel - COMPLETE
 - ✅ Phase 2.6: RLS Implementation - COMPLETE
 - ✅ Phase 2.7: Tenant-Based URL Routing - COMPLETE
-- 🚧 Phase 2.8: Platform Admin Separation - IN PROGRESS (see details below)
+- ✅ Phase 2.8: Platform Admin Separation - COMPLETE
+- ✅ Phase 2.9: Tenant Branding - COMPLETE
 
 **Recent Milestones:**
 - ✅ Phase 1 Complete (100%)
@@ -2706,8 +2718,9 @@ is_super_admin = Column(Boolean, default=False, index=True)
 - ✅ Phase 2.6: DataFrame and SQL query RLS filtering functions
 
 **Next Steps:**
-1. Phase 2.8: Complete Platform Admin Separation (see below)
-2. Phase 3: Data Connectors & Preprocessing
+1. ✅ Phase 2.8: Platform Admin Separation - COMPLETE
+2. ✅ Phase 2.9: Tenant Branding - COMPLETE
+3. Phase 3: Data Connectors & Preprocessing
 
 ---
 
@@ -2810,7 +2823,7 @@ User logs in → API returns user with tenant_slug
 
 ---
 
-## Phase 2.8: Platform Admin Separation - 🚧 IN PROGRESS
+## Phase 2.8: Platform Admin Separation - ✅ COMPLETE
 
 ### Overview
 Separating platform administrators from tenant users into distinct authentication flows and database tables.
@@ -2836,29 +2849,126 @@ Separating platform administrators from tenant users into distinct authenticatio
 - [x] Update admin endpoints to use platform admin auth
 - [x] Create Alembic migration (migrates super admins, drops `is_super_admin`)
 - [x] Remove `is_super_admin` from User model and UserRole enum
+- [x] Run migrations (`alembic upgrade head`)
+- [x] Update `auth.py` schemas/endpoints - remove `is_super_admin`
+- [x] Seed platform admin (admin@lucent.com / Admin123!)
 
-#### Frontend - 🚧 PARTIAL
+#### Frontend - ✅ COMPLETE
 - [x] Update `/lucent/login` for platform admin only
 - [x] Create `/lucent/{tenant}/login` for tenant users
 - [x] Update admin layout (uses `platform_token`, no "Back to App")
 - [x] Update AuthContext (removed `is_super_admin`)
-- [ ] Update Sidebar - remove Super Admin link
-- [ ] Update API client - tenant-specific 401 redirect
-- [ ] Create tenant register page
-- [ ] Update admin dashboard pages to use platform auth
+- [x] Update Sidebar - remove Super Admin link
+- [x] Update API client - tenant-specific 401 redirect
+- [x] Create tenant register page (`/{tenant}/register`)
+- [x] Update admin dashboard pages to use platform auth
+- [x] Remove all `is_super_admin` references from frontend
+- [x] Build and test - All passing
 
-#### Remaining Tasks - ⏳ PENDING
-- [ ] Run migrations (`alembic upgrade head`)
-- [ ] Update `auth.py` schemas/endpoints - remove `is_super_admin`
-- [ ] Add tenant validation to login endpoint
-- [ ] Build and test
+#### Security Enhancement - ✅ COMPLETE
+- [x] Add tenant validation to login endpoint (`/auth/tenant/{tenant_slug}/login`)
+  - Backend validates user belongs to specified tenant before issuing token
+  - Frontend updated to use tenant-specific endpoint
+  - Added `authApi.tenantLogin()` helper function
 
 ### Detailed Plan
 See: [PLATFORM_ADMIN_SEPARATION_PLAN.md](PLATFORM_ADMIN_SEPARATION_PLAN.md)
 
 ---
 
-*Document Version: 1.5*
+## Phase 2.9: Tenant Branding - ✅ COMPLETE
+
+### Overview
+Allow tenant admins to customize their organization's branding (logo, colors, etc.) for a white-label experience.
+
+### Features
+| Feature | Storage Location | Description |
+|---------|------------------|-------------|
+| Logo | `settings.branding.logo_url` | Custom tenant logo (header/sidebar) |
+| Primary Color | `settings.branding.colors.primary` | Theme accent color |
+| Secondary Color | `settings.branding.colors.secondary` | Secondary theme color |
+| Accent Color | `settings.branding.colors.accent` | Highlight color |
+| Favicon | `settings.branding.favicon_url` | Custom browser tab icon |
+| Login Background | `settings.branding.login_bg_url` | Custom login page background |
+| Login Message | `settings.branding.login_message` | Custom welcome message on login |
+
+### Architecture
+- Uses existing `tenants.settings` JSONB column
+- TenantContext provides branding to all components
+- CSS variables for dynamic theming (`--brand-primary`, `--brand-secondary`, `--brand-accent`)
+
+### Tasks
+
+#### Backend - ✅ COMPLETE
+- [x] Create branding schema (`schemas/branding.py`)
+- [x] Add GET `/tenants/{slug}/branding` endpoint (public)
+- [x] Add PUT `/tenants/{slug}/branding` endpoint (tenant admin only)
+
+#### Frontend - ✅ COMPLETE
+- [x] Create branding settings page (`/[tenant]/settings/branding`)
+- [x] Update TenantContext to include branding data
+- [x] Apply branding to Header (tenant logo + name in header bar)
+- [x] Apply branding to Login page (background, message, colors)
+- [x] Add color picker component for theme customization
+- [x] Add logo/background URL inputs
+- [x] Add Branding link to admin navigation
+- [x] Create Textarea UI component
+- [x] Create Settings page (`/[tenant]/settings`) with admin menu
+- [x] Keep LUCENT branding in Sidebar (consistent app identity)
+- [x] Tenant logo + name in Header (clickable, links to dashboard)
+
+#### Platform Admin - ⏳ DEFERRED
+- [ ] Allow platform admin to set default branding
+- [ ] Allow platform admin to reset tenant branding
+
+---
+
+## Phase 2 Summary - ✅ FULLY COMPLETE
+
+Phase 2 (Multi-Tenant Architecture & RLS) is now complete. All sub-phases delivered:
+
+| Sub-Phase | Description | Status |
+|-----------|-------------|--------|
+| 2.1 | Database Models & Migrations | ✅ Complete |
+| 2.2 | Backend API - Super Admin | ✅ Complete |
+| 2.3 | Backend API - Tenant Admin & Groups | ✅ Complete |
+| 2.4 | Frontend - Super Admin Panel | ✅ Complete |
+| 2.5 | Frontend - Tenant Admin Panel | ✅ Complete |
+| 2.6 | RLS Implementation | ✅ Complete |
+| 2.7 | Tenant-Based URL Routing | ✅ Complete |
+| 2.8 | Platform Admin Separation | ✅ Complete |
+| 2.9 | Tenant Branding | ✅ Complete |
+
+### Key Achievements
+- Full multi-tenant isolation with tenant-specific URLs (`/{tenant-slug}/dashboard`)
+- Separate Platform Admin portal (`/admin/*`) vs Tenant Admin (`/{tenant}/settings/*`)
+- Row-Level Security (RLS) for data filtering by user groups
+- Tenant branding customization (logo, colors, login page)
+- User and group management within tenants
+- Connector management with RLS configuration
+
+### Current URLs Structure
+```
+Platform Admin:
+  /admin                    → Platform dashboard
+  /admin/tenants            → Manage all tenants
+  /admin/tenants/[id]       → Tenant details
+  /admin/users              → All platform users
+
+Tenant Users:
+  /{tenant}/login           → Tenant-specific login
+  /{tenant}/register        → Request access to tenant
+  /{tenant}/dashboard       → Tenant dashboard
+  /{tenant}/settings        → Settings menu (admin only)
+  /{tenant}/settings/users  → Manage tenant users
+  /{tenant}/settings/groups → Manage user groups
+  /{tenant}/settings/connectors → Manage RLS
+  /{tenant}/settings/branding → Customize branding
+```
+
+---
+
+*Document Version: 1.8*
 *Created: 2026-01-07*
-*Updated: 2026-01-09*
+*Updated: 2026-01-11*
 *Based on: LUCENT R Shiny Application*

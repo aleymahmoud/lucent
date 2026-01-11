@@ -9,6 +9,7 @@ from app.models.user_group import UserGroup
 from app.models.user_group_membership import UserGroupMembership
 from app.models.connector_rls import ConnectorRLS
 from app.models.platform_admin import PlatformAdmin
+from app.models.dataset import Dataset
 
 __all__ = [
     "Tenant",
@@ -23,4 +24,5 @@ __all__ = [
     "UserGroupMembership",
     "ConnectorRLS",
     "PlatformAdmin",
+    "Dataset",
 ]

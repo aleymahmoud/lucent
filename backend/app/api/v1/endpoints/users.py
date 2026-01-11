@@ -7,7 +7,7 @@ from sqlalchemy import select, func
 from sqlalchemy.orm import selectinload
 from typing import Optional
 
-from app.core.deps import get_db, get_current_admin
+from app.core.deps import get_db, get_current_tenant_admin
 from app.core.security import get_password_hash
 from app.models import User, UserRole, UserGroup, UserGroupMembership, Connector
 from app.schemas.users import (
@@ -28,7 +28,7 @@ router = APIRouter()
 
 @router.get("/stats", response_model=TenantStats)
 async def get_tenant_stats(
-    current_user: User = Depends(get_current_admin),
+    current_user: User = Depends(get_current_tenant_admin),
     db: AsyncSession = Depends(get_db)
 ):
     """Get statistics for the current tenant (Tenant Admin only)"""
@@ -81,7 +81,7 @@ async def get_tenant_stats(
 
 @router.get("", response_model=TenantUserListResponse)
 async def list_tenant_users(
-    current_user: User = Depends(get_current_admin),
+    current_user: User = Depends(get_current_tenant_admin),
     db: AsyncSession = Depends(get_db),
     skip: int = Query(0, ge=0),
     limit: int = Query(50, ge=1, le=100),
@@ -163,7 +163,7 @@ async def list_tenant_users(
 @router.post("", response_model=TenantUserResponse, status_code=status.HTTP_201_CREATED)
 async def create_tenant_user(
     user_data: TenantUserCreate,
-    current_user: User = Depends(get_current_admin),
+    current_user: User = Depends(get_current_tenant_admin),
     db: AsyncSession = Depends(get_db)
 ):
     """Create a new user in the current tenant (Tenant Admin only)"""
@@ -218,7 +218,7 @@ async def create_tenant_user(
 @router.get("/{user_id}", response_model=TenantUserResponse)
 async def get_tenant_user(
     user_id: str,
-    current_user: User = Depends(get_current_admin),
+    current_user: User = Depends(get_current_tenant_admin),
     db: AsyncSession = Depends(get_db)
 ):
     """Get a specific user in the current tenant (Tenant Admin only)"""
@@ -260,7 +260,7 @@ async def get_tenant_user(
 async def update_tenant_user(
     user_id: str,
     user_data: TenantUserUpdate,
-    current_user: User = Depends(get_current_admin),
+    current_user: User = Depends(get_current_tenant_admin),
     db: AsyncSession = Depends(get_db)
 ):
     """Update a user in the current tenant (Tenant Admin only)"""
@@ -277,13 +277,6 @@ async def update_tenant_user(
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="User not found"
-        )
-
-    # Prevent modifying super admins
-    if user.is_super_admin:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Cannot modify a super admin user"
         )
 
     # Prevent demoting yourself if you're the only admin
@@ -340,7 +333,7 @@ async def update_tenant_user(
 @router.delete("/{user_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_tenant_user(
     user_id: str,
-    current_user: User = Depends(get_current_admin),
+    current_user: User = Depends(get_current_tenant_admin),
     db: AsyncSession = Depends(get_db)
 ):
     """Delete a user from the current tenant (Tenant Admin only)"""
@@ -363,13 +356,6 @@ async def delete_tenant_user(
             detail="Cannot delete yourself"
         )
 
-    # Prevent deleting super admins
-    if user.is_super_admin:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Cannot delete a super admin user"
-        )
-
     await db.delete(user)
     await db.commit()
 
@@ -381,7 +367,7 @@ async def delete_tenant_user(
 @router.put("/{user_id}/approve", response_model=TenantUserResponse)
 async def approve_tenant_user(
     user_id: str,
-    current_user: User = Depends(get_current_admin),
+    current_user: User = Depends(get_current_tenant_admin),
     db: AsyncSession = Depends(get_db)
 ):
     """Approve a pending user in the current tenant (Tenant Admin only)"""
@@ -426,7 +412,7 @@ async def approve_tenant_user(
 @router.put("/{user_id}/toggle-active", response_model=TenantUserResponse)
 async def toggle_tenant_user_active(
     user_id: str,
-    current_user: User = Depends(get_current_admin),
+    current_user: User = Depends(get_current_tenant_admin),
     db: AsyncSession = Depends(get_db)
 ):
     """Toggle user active status in the current tenant (Tenant Admin only)"""
@@ -450,13 +436,6 @@ async def toggle_tenant_user_active(
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Cannot deactivate yourself"
-        )
-
-    # Prevent modifying super admins
-    if user.is_super_admin:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Cannot modify a super admin user"
         )
 
     user.is_active = not user.is_active

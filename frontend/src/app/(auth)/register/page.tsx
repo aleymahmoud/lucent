@@ -1,142 +1,57 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect } from "react";
 import { useRouter } from "next/navigation";
-import Link from "next/link";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
-import { authApi } from "@/lib/api/endpoints";
+import Link from "next/link";
+import { BarChart3, Shield } from "lucide-react";
 
 export default function RegisterPage() {
   const router = useRouter();
-  const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
-  const [fullName, setFullName] = useState("");
-  const [tenantName, setTenantName] = useState("");
-  const [error, setError] = useState("");
-  const [loading, setLoading] = useState(false);
-
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setError("");
-    setLoading(true);
-
-    try {
-      const response = await authApi.register({
-        email,
-        password,
-        fullName,
-        tenantName,
-      });
-
-      // Store token and user info
-      localStorage.setItem("token", response.access_token);
-      localStorage.setItem("user", JSON.stringify(response.user));
-
-      // Redirect to tenant-specific dashboard
-      if (response.user.tenant_slug) {
-        router.push(`/${response.user.tenant_slug}/dashboard`);
-      } else {
-        setError("Unable to determine your organization. Please contact support.");
-      }
-    } catch (err: any) {
-      setError(err.response?.data?.detail || "Registration failed. Please try again.");
-    } finally {
-      setLoading(false);
-    }
-  };
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-gray-50 px-4 py-8">
-      <Card className="w-full max-w-md">
-        <CardHeader className="space-y-1">
-          <CardTitle className="text-2xl font-bold text-center">Create an account</CardTitle>
-          <CardDescription className="text-center">
-            Get started with LUCENT forecasting platform
+    <div className="min-h-screen flex items-center justify-center bg-gray-900 px-4 py-8">
+      <Card className="w-full max-w-md bg-gray-800 border-gray-700">
+        <CardHeader className="space-y-1 text-center">
+          <div className="flex justify-center mb-4">
+            <div className="p-3 bg-red-600/20 rounded-full">
+              <Shield className="h-8 w-8 text-red-500" />
+            </div>
+          </div>
+          <CardTitle className="text-2xl font-bold text-white">Organization Registration</CardTitle>
+          <CardDescription className="text-gray-400">
+            New organizations must be created by a Platform Administrator
           </CardDescription>
         </CardHeader>
-        <form onSubmit={handleSubmit}>
-          <CardContent className="space-y-4">
-            {error && (
-              <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded text-sm">
-                {error}
-              </div>
-            )}
+        <CardContent className="space-y-4">
+          <div className="bg-gray-700 border border-gray-600 text-gray-300 px-4 py-3 rounded text-sm">
+            <p className="mb-2">
+              <strong>For Existing Organizations:</strong>
+            </p>
+            <p className="text-gray-400">
+              If your organization already exists, please ask your administrator for the login URL
+              (e.g., <code className="bg-gray-600 px-1 rounded">/your-org/login</code>)
+            </p>
+          </div>
 
-            <div className="space-y-2">
-              <Label htmlFor="fullName">Full Name</Label>
-              <Input
-                id="fullName"
-                type="text"
-                placeholder="John Doe"
-                value={fullName}
-                onChange={(e) => setFullName(e.target.value)}
-                required
-                disabled={loading}
-              />
-            </div>
+          <div className="bg-gray-700 border border-gray-600 text-gray-300 px-4 py-3 rounded text-sm">
+            <p className="mb-2">
+              <strong>For New Organizations:</strong>
+            </p>
+            <p className="text-gray-400">
+              Contact the Platform Administrator to request a new organization be created.
+            </p>
+          </div>
 
-            <div className="space-y-2">
-              <Label htmlFor="tenantName">Company Name</Label>
-              <Input
-                id="tenantName"
-                type="text"
-                placeholder="Acme Corp"
-                value={tenantName}
-                onChange={(e) => setTenantName(e.target.value)}
-                required
-                disabled={loading}
-              />
-            </div>
-
-            <div className="space-y-2">
-              <Label htmlFor="email">Email</Label>
-              <Input
-                id="email"
-                type="email"
-                placeholder="admin@example.com"
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                required
-                disabled={loading}
-              />
-            </div>
-
-            <div className="space-y-2">
-              <Label htmlFor="password">Password</Label>
-              <Input
-                id="password"
-                type="password"
-                placeholder="••••••••"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                required
-                minLength={8}
-                disabled={loading}
-              />
-              <p className="text-xs text-gray-500">Must be at least 8 characters</p>
-            </div>
-          </CardContent>
-
-          <CardFooter className="flex flex-col space-y-4">
-            <Button
-              type="submit"
-              className="w-full"
-              disabled={loading}
-            >
-              {loading ? "Creating account..." : "Create account"}
-            </Button>
-
-            <div className="text-sm text-center text-gray-600">
-              Already have an account?{" "}
-              <Link href="/login" className="text-blue-600 hover:underline">
-                Sign in
-              </Link>
-            </div>
-          </CardFooter>
-        </form>
+          <div className="pt-4 space-y-3">
+            <Link href="/login" className="block">
+              <Button variant="outline" className="w-full bg-gray-700 border-gray-600 text-white hover:bg-gray-600">
+                Platform Admin Login
+              </Button>
+            </Link>
+          </div>
+        </CardContent>
       </Card>
     </div>
   );

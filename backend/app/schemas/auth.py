@@ -13,6 +13,14 @@ class UserRegister(BaseModel):
     tenant_name: str = Field(..., min_length=1, max_length=255)
 
 
+class TenantAccessRequest(BaseModel):
+    """Request access to an existing tenant"""
+    email: EmailStr
+    password: str = Field(..., min_length=8, max_length=100)
+    full_name: str = Field(..., min_length=1, max_length=255)
+    tenant_slug: str = Field(..., min_length=1, max_length=255)
+
+
 class UserLogin(BaseModel):
     email: EmailStr
     password: str
@@ -36,7 +44,6 @@ class UserResponse(BaseModel):
     tenant_slug: Optional[str] = None
     is_active: bool
     is_approved: bool
-    is_super_admin: bool = False
     created_at: datetime
     last_login: Optional[datetime] = None
 

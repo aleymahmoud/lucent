@@ -96,7 +96,7 @@ export default function ConnectorsPage() {
   const [isLoadingColumns, setIsLoadingColumns] = useState(false);
 
   useEffect(() => {
-    if (user && user.role !== "admin" && !user.is_super_admin) {
+    if (user && user.role !== "admin" ) {
       router.push(`/${tenantSlug}/dashboard`);
     }
   }, [user, router, tenantSlug]);
@@ -210,7 +210,7 @@ export default function ConnectorsPage() {
 
   const allRlsValues = Array.from(new Set(groups.flatMap((g) => g.rls_values)));
 
-  if (user && user.role !== "admin" && !user.is_super_admin) {
+  if (user && user.role !== "admin" ) {
     return null;
   }
 

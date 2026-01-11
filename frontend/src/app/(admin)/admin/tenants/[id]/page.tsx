@@ -354,11 +354,6 @@ export default function TenantDetailPage() {
                   <TableRow key={user.id}>
                     <TableCell className="font-medium">
                       {user.full_name || "-"}
-                      {user.is_super_admin && (
-                        <span className="ml-2 inline-flex items-center rounded-full bg-red-100 px-2 py-0.5 text-xs font-medium text-red-700">
-                          Super Admin
-                        </span>
-                      )}
                     </TableCell>
                     <TableCell>{user.email}</TableCell>
                     <TableCell className="capitalize">{user.role}</TableCell>
@@ -411,21 +406,17 @@ export default function TenantDetailPage() {
                               </>
                             )}
                           </DropdownMenuItem>
-                          {!user.is_super_admin && (
-                            <>
-                              <DropdownMenuSeparator />
-                              <DropdownMenuItem
-                                onClick={() => {
-                                  setSelectedUser(user);
-                                  setIsDeleteUserOpen(true);
-                                }}
-                                className="text-red-600"
-                              >
-                                <Trash2 className="mr-2 h-4 w-4" />
-                                Delete
-                              </DropdownMenuItem>
-                            </>
-                          )}
+                          <DropdownMenuSeparator />
+                          <DropdownMenuItem
+                            onClick={() => {
+                              setSelectedUser(user);
+                              setIsDeleteUserOpen(true);
+                            }}
+                            className="text-red-600"
+                          >
+                            <Trash2 className="mr-2 h-4 w-4" />
+                            Delete
+                          </DropdownMenuItem>
                         </DropdownMenuContent>
                       </DropdownMenu>
                     </TableCell>

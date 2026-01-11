@@ -3,6 +3,30 @@
 // ============================================
 
 import { api } from './client';
+import axios from 'axios';
+
+// Create a separate API client for platform admin that uses platform_token
+const createPlatformAdminRequest = async <T>(
+  method: 'get' | 'post' | 'put' | 'delete',
+  url: string,
+  data?: any
+): Promise<T> => {
+  const baseURL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000/api/v1';
+  const token = typeof window !== 'undefined' ? localStorage.getItem('platform_token') : null;
+
+  const config = {
+    method,
+    url: `${baseURL}${url}`,
+    headers: {
+      'Content-Type': 'application/json',
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
+    ...(data ? { data } : {}),
+  };
+
+  const response = await axios(config);
+  return response.data;
+};
 import type {
   User,
   Tenant,
@@ -31,7 +55,6 @@ interface ApiUser {
   tenant_slug: string | null;
   is_active: boolean;
   is_approved: boolean;
-  is_super_admin: boolean;
   created_at: string;
   last_login: string | null;
 }
@@ -74,7 +97,6 @@ interface AdminUserResponse {
   tenant_name: string | null;
   is_active: boolean;
   is_approved: boolean;
-  is_super_admin: boolean;
   created_at: string;
   last_login: string | null;
 }
@@ -95,6 +117,10 @@ interface PlatformStats {
 export const authApi = {
   login: (email: string, password: string) =>
     api.post<{ access_token: string; token_type: string; user: ApiUser }>('/auth/login', { email, password }),
+
+  // Tenant-specific login with backend validation
+  tenantLogin: (tenantSlug: string, email: string, password: string) =>
+    api.post<{ access_token: string; token_type: string; user: ApiUser }>(`/auth/tenant/${tenantSlug}/login`, { email, password }),
 
   register: (data: { email: string; password: string; fullName: string; tenantName: string }) =>
     api.post<{ access_token: string; token_type: string; user: ApiUser }>('/auth/register', {
@@ -379,7 +405,7 @@ export const auditApi = {
 export const superAdminApi = {
   // Platform Stats
   getStats: () =>
-    api.get<PlatformStats>('/admin/stats'),
+    createPlatformAdminRequest<PlatformStats>('get', '/admin/stats'),
 
   // Tenant Management
   listTenants: (params?: { skip?: number; limit?: number; search?: string; is_active?: boolean }) => {
@@ -388,24 +414,24 @@ export const superAdminApi = {
     if (params?.limit !== undefined) query.append('limit', params.limit.toString());
     if (params?.search) query.append('search', params.search);
     if (params?.is_active !== undefined) query.append('is_active', params.is_active.toString());
-    return api.get<AdminTenantListResponse>(`/admin/tenants?${query.toString()}`);
+    return createPlatformAdminRequest<AdminTenantListResponse>('get', `/admin/tenants?${query.toString()}`);
   },
 
   getTenant: (id: string) =>
-    api.get<AdminTenant>(`/admin/tenants/${id}`),
+    createPlatformAdminRequest<AdminTenant>('get', `/admin/tenants/${id}`),
 
   createTenant: (data: { name: string; slug: string; settings?: Record<string, any>; limits?: Record<string, any> }) =>
-    api.post<AdminTenant>('/admin/tenants', data),
+    createPlatformAdminRequest<AdminTenant>('post', '/admin/tenants', data),
 
   updateTenant: (id: string, data: { name?: string; slug?: string; settings?: Record<string, any>; limits?: Record<string, any>; is_active?: boolean }) =>
-    api.put<AdminTenant>(`/admin/tenants/${id}`, data),
+    createPlatformAdminRequest<AdminTenant>('put', `/admin/tenants/${id}`, data),
 
   deleteTenant: (id: string) =>
-    api.delete(`/admin/tenants/${id}`),
+    createPlatformAdminRequest<void>('delete', `/admin/tenants/${id}`),
 
   // Create admin user for a tenant
   createTenantAdmin: (tenantId: string, data: { email: string; password: string; full_name: string; role?: string }) =>
-    api.post<AdminUserResponse>(`/admin/tenants/${tenantId}/admin`, data),
+    createPlatformAdminRequest<AdminUserResponse>('post', `/admin/tenants/${tenantId}/admin`, data),
 
   // User Management (all tenants)
   listUsers: (params?: { skip?: number; limit?: number; tenant_id?: string; search?: string; is_active?: boolean; is_approved?: boolean; role?: string }) => {
@@ -417,17 +443,17 @@ export const superAdminApi = {
     if (params?.is_active !== undefined) query.append('is_active', params.is_active.toString());
     if (params?.is_approved !== undefined) query.append('is_approved', params.is_approved.toString());
     if (params?.role) query.append('role', params.role);
-    return api.get<AdminUserListResponse>(`/admin/users?${query.toString()}`);
+    return createPlatformAdminRequest<AdminUserListResponse>('get', `/admin/users?${query.toString()}`);
   },
 
   approveUser: (userId: string) =>
-    api.put<AdminUserResponse>(`/admin/users/${userId}/approve`),
+    createPlatformAdminRequest<AdminUserResponse>('put', `/admin/users/${userId}/approve`),
 
   toggleUserActive: (userId: string) =>
-    api.put<AdminUserResponse>(`/admin/users/${userId}/toggle-active`),
+    createPlatformAdminRequest<AdminUserResponse>('put', `/admin/users/${userId}/toggle-active`),
 
   deleteUser: (userId: string) =>
-    api.delete(`/admin/users/${userId}`),
+    createPlatformAdminRequest<void>('delete', `/admin/users/${userId}`),
 };
 
 // ============================================
@@ -625,7 +651,51 @@ export const tenantsPublicApi = {
     api.get<TenantPublicInfo>(`/tenants/${slug}`),
 };
 
+// ============================================
+// Tenant Branding API
+// ============================================
+
+interface BrandingColors {
+  primary: string;
+  secondary: string;
+  accent: string;
+}
+
+interface BrandingSettings {
+  logo_url: string | null;
+  favicon_url: string | null;
+  login_bg_url: string | null;
+  login_message: string | null;
+  colors: BrandingColors;
+}
+
+interface BrandingResponse {
+  tenant_id: string;
+  tenant_name: string;
+  tenant_slug: string;
+  branding: BrandingSettings;
+}
+
+interface BrandingUpdate {
+  logo_url?: string | null;
+  favicon_url?: string | null;
+  login_bg_url?: string | null;
+  login_message?: string | null;
+  colors?: Partial<BrandingColors>;
+}
+
+export const brandingApi = {
+  // Get branding (public - no auth required)
+  getBranding: (tenantSlug: string) =>
+    api.get<BrandingResponse>(`/tenants/${tenantSlug}/branding`),
+
+  // Update branding (tenant admin only)
+  updateBranding: (tenantSlug: string, data: BrandingUpdate) =>
+    api.put<BrandingResponse>(`/tenants/${tenantSlug}/branding`, data),
+};
+
 // Export types for use in components
 export type { ApiUser, TenantPublicInfo };
 export type { AdminTenant, AdminTenantListResponse, AdminUserResponse, AdminUserListResponse, PlatformStats };
 export type { TenantUserResponse, TenantUserListResponse, TenantStats, GroupResponse, GroupDetailResponse, GroupListResponse, ConnectorRLSResponse, ConnectorWithRLS, ConnectorListResponse };
+export type { BrandingColors, BrandingSettings, BrandingResponse, BrandingUpdate };

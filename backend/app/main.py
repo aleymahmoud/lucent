@@ -2,6 +2,13 @@
 # LUCENT Backend - FastAPI Main Application
 # ============================================
 
+import sys
+import asyncio
+
+# Use SelectorEventLoop on Windows for better asyncpg compatibility
+if sys.platform == 'win32':
+    asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse

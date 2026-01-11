@@ -1,6 +1,6 @@
 "use client";
 
-import { useParams, useRouter, notFound } from "next/navigation";
+import { useParams, useRouter, usePathname } from "next/navigation";
 import { useEffect } from "react";
 import { Sidebar } from "@/components/layout/Sidebar";
 import { Header } from "@/components/layout/Header";
@@ -11,8 +11,17 @@ function TenantLayoutContent({ children }: { children: React.ReactNode }) {
   const { tenant, isLoading: isTenantLoading, isValid, error } = useTenant();
   const { isLoading: isAuthLoading, isAuthenticated, user } = useAuth();
   const router = useRouter();
+  const pathname = usePathname();
   const params = useParams();
   const tenantSlug = params.tenant as string;
+
+  // Check if we're on a public page (login, register)
+  const isPublicPage = pathname?.endsWith('/login') || pathname?.endsWith('/register');
+
+  // For public pages, just render children without auth checks
+  if (isPublicPage) {
+    return <>{children}</>;
+  }
 
   // Show loading state while checking auth or validating tenant
   if (isAuthLoading || isTenantLoading) {
@@ -26,9 +35,9 @@ function TenantLayoutContent({ children }: { children: React.ReactNode }) {
     );
   }
 
-  // Redirect to login if not authenticated
+  // Redirect to tenant login if not authenticated
   if (!isAuthenticated) {
-    router.push("/login");
+    router.push(`/${tenantSlug}/login`);
     return null;
   }
 
@@ -43,7 +52,7 @@ function TenantLayoutContent({ children }: { children: React.ReactNode }) {
             The organization "{tenantSlug}" does not exist or is no longer active.
           </p>
           <button
-            onClick={() => router.push("/login")}
+            onClick={() => router.push(`/${tenantSlug}/login`)}
             className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 transition-colors"
           >
             Go to Login
@@ -54,7 +63,7 @@ function TenantLayoutContent({ children }: { children: React.ReactNode }) {
   }
 
   // Verify user belongs to this tenant
-  if (user && user.tenant_slug !== tenantSlug && !user.is_super_admin) {
+  if (user && user.tenant_slug !== tenantSlug) {
     return (
       <div className="flex h-screen items-center justify-center">
         <div className="text-center max-w-md">

@@ -7,10 +7,9 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
-import { BarChart3 } from "lucide-react";
+import { BarChart3, CheckCircle } from "lucide-react";
 import { api } from "@/lib/api/client";
-import { tenantsPublicApi, brandingApi, BrandingSettings } from "@/lib/api/endpoints";
-import { useAuth } from "@/contexts/AuthContext";
+import { tenantsPublicApi } from "@/lib/api/endpoints";
 
 interface TenantInfo {
   id: string;
@@ -19,55 +18,24 @@ interface TenantInfo {
   is_active: boolean;
 }
 
-interface UserResponse {
-  id: string;
-  email: string;
-  full_name: string | null;
-  role: string;
-  tenant_id: string;
-  tenant_slug: string | null;
-  is_active: boolean;
-  is_approved: boolean;
-  created_at: string;
-  last_login: string | null;
-}
-
-interface AuthResponse {
-  access_token: string;
-  token_type: string;
-  user: UserResponse;
-}
-
-// Default branding
-const defaultBranding: BrandingSettings = {
-  logo_url: null,
-  favicon_url: null,
-  login_bg_url: null,
-  login_message: null,
-  colors: {
-    primary: "#2563eb",
-    secondary: "#1e40af",
-    accent: "#3b82f6",
-  },
-};
-
-export default function TenantLoginPage() {
+export default function TenantRegisterPage() {
   const router = useRouter();
   const params = useParams();
   const tenantSlug = params?.tenant as string;
-  const { checkAuth } = useAuth();
 
   const [tenant, setTenant] = useState<TenantInfo | null>(null);
-  const [branding, setBranding] = useState<BrandingSettings>(defaultBranding);
   const [tenantLoading, setTenantLoading] = useState(true);
   const [tenantError, setTenantError] = useState<string | null>(null);
 
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
+  const [fullName, setFullName] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
+  const [success, setSuccess] = useState(false);
 
-  // Validate tenant and fetch branding
+  // Validate tenant exists
   useEffect(() => {
     async function validateTenant() {
       if (!tenantSlug) return;
@@ -78,15 +46,6 @@ export default function TenantLoginPage() {
           setTenantError("This organization is currently inactive.");
         } else {
           setTenant(tenantInfo);
-
-          // Fetch branding
-          try {
-            const brandingResponse = await brandingApi.getBranding(tenantSlug);
-            setBranding(brandingResponse.branding);
-          } catch (err) {
-            // Use default branding if fetch fails
-            console.error("Failed to fetch branding:", err);
-          }
         }
       } catch (err) {
         setTenantError("Organization not found.");
@@ -103,34 +62,36 @@ export default function TenantLoginPage() {
     setError("");
     setLoading(true);
 
+    // Validate passwords match
+    if (password !== confirmPassword) {
+      setError("Passwords do not match.");
+      setLoading(false);
+      return;
+    }
+
+    // Validate password length
+    if (password.length < 8) {
+      setError("Password must be at least 8 characters long.");
+      setLoading(false);
+      return;
+    }
+
     try {
-      // Use tenant-specific login endpoint with backend validation
-      const response = await api.post<AuthResponse>(`/auth/tenant/${tenantSlug}/login`, {
+      // Request access to tenant
+      await api.post("/auth/request-access", {
         email,
         password,
+        full_name: fullName,
+        tenant_slug: tenantSlug,
       });
 
-      // Store user token and info
-      localStorage.setItem("token", response.access_token);
-      localStorage.setItem("user", JSON.stringify(response.user));
-
-      // Update AuthContext state
-      await checkAuth();
-
-      // Redirect to tenant dashboard
-      router.push(`/${tenantSlug}/dashboard`);
+      setSuccess(true);
     } catch (err: any) {
       const detail = err.response?.data?.detail;
-      if (detail?.includes("pending approval")) {
-        setError("Your account is pending approval. Please contact your administrator.");
-      } else if (detail?.includes("do not have access")) {
-        setError("Your account is not associated with this organization.");
-      } else if (detail?.includes("Organization not found")) {
-        setError("Organization not found.");
-      } else if (detail?.includes("Organization is not active")) {
-        setError("This organization is currently inactive.");
+      if (detail?.includes("already registered") || detail?.includes("already exists")) {
+        setError("An account with this email already exists. Please sign in instead.");
       } else {
-        setError(detail || "Invalid credentials. Please try again.");
+        setError(detail || "Registration failed. Please try again.");
       }
     } finally {
       setLoading(false);
@@ -168,52 +129,50 @@ export default function TenantLoginPage() {
     );
   }
 
-  // Background style
-  const bgStyle = branding.login_bg_url
-    ? {
-        backgroundImage: `url(${branding.login_bg_url})`,
-        backgroundSize: 'cover',
-        backgroundPosition: 'center',
-      }
-    : {};
+  // Success state
+  if (success) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-gray-50 px-4">
+        <Card className="w-full max-w-md">
+          <CardHeader className="space-y-1 text-center">
+            <div className="flex justify-center mb-4">
+              <div className="p-3 bg-green-100 rounded-full">
+                <CheckCircle className="h-8 w-8 text-green-600" />
+              </div>
+            </div>
+            <CardTitle className="text-2xl font-bold text-green-700">Request Submitted</CardTitle>
+            <CardDescription>
+              Your access request has been sent to the administrators of <strong>{tenant?.name}</strong>.
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="text-center">
+            <p className="text-gray-600 text-sm">
+              You will receive an email notification once your account has been approved.
+              This usually takes 1-2 business days.
+            </p>
+          </CardContent>
+          <CardFooter className="justify-center">
+            <Link href={`/${tenantSlug}/login`}>
+              <Button variant="outline">Back to Login</Button>
+            </Link>
+          </CardFooter>
+        </Card>
+      </div>
+    );
+  }
 
   return (
-    <div
-      className="min-h-screen flex items-center justify-center bg-gray-50 px-4"
-      style={bgStyle}
-    >
-      {/* Overlay for background image */}
-      {branding.login_bg_url && (
-        <div className="absolute inset-0 bg-black/50" />
-      )}
-
-      <Card className="w-full max-w-md relative z-10">
+    <div className="min-h-screen flex items-center justify-center bg-gray-50 px-4 py-8">
+      <Card className="w-full max-w-md">
         <CardHeader className="space-y-1 text-center">
           <div className="flex justify-center mb-4">
-            {branding.logo_url ? (
-              <img
-                src={branding.logo_url}
-                alt={tenant?.name || 'Logo'}
-                className="h-12 max-w-[200px] object-contain"
-                onError={(e) => {
-                  (e.target as HTMLImageElement).style.display = 'none';
-                }}
-              />
-            ) : (
-              <div
-                className="p-3 rounded-full"
-                style={{ backgroundColor: `${branding.colors.primary}20` }}
-              >
-                <BarChart3
-                  className="h-8 w-8"
-                  style={{ color: branding.colors.primary }}
-                />
-              </div>
-            )}
+            <div className="p-3 bg-blue-600/10 rounded-full">
+              <BarChart3 className="h-8 w-8 text-blue-600" />
+            </div>
           </div>
-          <CardTitle className="text-2xl font-bold">{tenant?.name}</CardTitle>
+          <CardTitle className="text-2xl font-bold">Request Access</CardTitle>
           <CardDescription>
-            {branding.login_message || "Sign in to access your organization's dashboard"}
+            Request access to <strong>{tenant?.name}</strong>
           </CardDescription>
         </CardHeader>
         <form onSubmit={handleSubmit}>
@@ -223,6 +182,19 @@ export default function TenantLoginPage() {
                 {error}
               </div>
             )}
+
+            <div className="space-y-2">
+              <Label htmlFor="fullName">Full Name</Label>
+              <Input
+                id="fullName"
+                type="text"
+                placeholder="John Doe"
+                value={fullName}
+                onChange={(e) => setFullName(e.target.value)}
+                required
+                disabled={loading}
+              />
+            </div>
 
             <div className="space-y-2">
               <Label htmlFor="email">Email</Label>
@@ -242,33 +214,47 @@ export default function TenantLoginPage() {
               <Input
                 id="password"
                 type="password"
-                placeholder="********"
+                placeholder="••••••••"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
                 required
                 disabled={loading}
+                minLength={8}
               />
+              <p className="text-xs text-gray-500">Must be at least 8 characters</p>
+            </div>
+
+            <div className="space-y-2">
+              <Label htmlFor="confirmPassword">Confirm Password</Label>
+              <Input
+                id="confirmPassword"
+                type="password"
+                placeholder="••••••••"
+                value={confirmPassword}
+                onChange={(e) => setConfirmPassword(e.target.value)}
+                required
+                disabled={loading}
+              />
+            </div>
+
+            <div className="bg-blue-50 border border-blue-200 text-blue-700 px-4 py-3 rounded text-sm">
+              <strong>Note:</strong> Your account will need to be approved by an administrator before you can access the dashboard.
             </div>
           </CardContent>
 
           <CardFooter className="flex flex-col space-y-4">
             <Button
               type="submit"
-              className="w-full text-white"
-              style={{ backgroundColor: branding.colors.primary }}
+              className="w-full"
               disabled={loading}
             >
-              {loading ? "Signing in..." : "Sign in"}
+              {loading ? "Submitting..." : "Request Access"}
             </Button>
 
             <div className="text-sm text-center text-gray-600">
-              Don't have an account?{" "}
-              <Link
-                href={`/${tenantSlug}/register`}
-                className="hover:underline"
-                style={{ color: branding.colors.primary }}
-              >
-                Request access
+              Already have an account?{" "}
+              <Link href={`/${tenantSlug}/login`} className="text-blue-600 hover:underline">
+                Sign in
               </Link>
             </div>
           </CardFooter>

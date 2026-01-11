@@ -19,9 +19,7 @@ export default function DashboardLayout({
   useEffect(() => {
     if (!isLoading && isAuthenticated && user) {
       // Redirect to tenant-specific dashboard
-      if (user.is_super_admin) {
-        router.replace("/admin");
-      } else if (user.tenant_slug) {
+      if (user.tenant_slug) {
         router.replace(`/${user.tenant_slug}/dashboard`);
       } else {
         router.replace("/login");

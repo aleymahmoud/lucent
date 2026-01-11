@@ -4,7 +4,6 @@
 
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
 from sqlalchemy.orm import declarative_base
-from sqlalchemy.pool import NullPool
 from sqlalchemy import text
 from typing import AsyncGenerator
 import logging
@@ -14,10 +13,14 @@ from app.config import settings
 logger = logging.getLogger(__name__)
 
 # Create async engine
+# For local PostgreSQL, use default connection pooling for performance
+# For cloud (Neon), we'd use NullPool since they handle pooling
 engine = create_async_engine(
     settings.DATABASE_URL,
-    echo=settings.DEBUG,
-    poolclass=NullPool,  # Neon uses connection pooling, so we disable SQLAlchemy's pool
+    echo=False,  # Disable SQL logging for performance
+    pool_size=5,
+    max_overflow=10,
+    pool_pre_ping=True,  # Check connection health
     future=True,
 )
 

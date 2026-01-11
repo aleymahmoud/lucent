@@ -1,6 +1,8 @@
 'use client';
 
-import { Bell, Search, LogOut } from 'lucide-react';
+import Link from 'next/link';
+import { useParams } from 'next/navigation';
+import { Bell, Search, LogOut, Building2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import {
@@ -12,9 +14,13 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { useAuth } from '@/contexts/AuthContext';
+import { useTenant } from '@/contexts/TenantContext';
 
 export function Header() {
   const { user, logout } = useAuth();
+  const { tenant, branding } = useTenant();
+  const params = useParams();
+  const tenantSlug = (params?.tenant as string) || user?.tenant_slug || '';
 
   const userInitial = user?.full_name?.charAt(0).toUpperCase() || user?.email?.charAt(0).toUpperCase() || 'U';
   const userName = user?.full_name || user?.email || 'User';
@@ -22,9 +28,35 @@ export function Header() {
 
   return (
     <header className="flex h-16 items-center justify-between border-b bg-background px-6">
-      {/* Search */}
+      {/* Left side: Tenant Logo + Search */}
       <div className="flex flex-1 items-center gap-4">
-        <div className="relative w-96">
+        {/* Tenant Logo + Name - Clickable to dashboard */}
+        <Link
+          href={`/${tenantSlug}/dashboard`}
+          className="flex items-center gap-3 hover:opacity-80 transition-opacity"
+        >
+          {branding?.logo_url ? (
+            <img
+              src={branding.logo_url}
+              alt={tenant?.name || 'Organization'}
+              className="h-8 max-w-[40px] object-contain"
+              onError={(e) => {
+                (e.target as HTMLImageElement).style.display = 'none';
+              }}
+            />
+          ) : (
+            <Building2 className="h-6 w-6 text-muted-foreground" />
+          )}
+          <span className="font-semibold text-base">
+            {tenant?.name || 'Organization'}
+          </span>
+        </Link>
+
+        {/* Divider */}
+        <div className="h-6 w-px bg-border" />
+
+        {/* Search */}
+        <div className="relative flex-1 max-w-md">
           <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
           <Input
             type="search"

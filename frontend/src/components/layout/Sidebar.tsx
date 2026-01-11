@@ -14,9 +14,9 @@ import {
   TrendingUp,
   Users,
   Activity,
-  Shield,
   UsersRound,
   Link2,
+  Palette,
 } from 'lucide-react';
 
 // Navigation items (paths will be prefixed with tenant slug)
@@ -34,6 +34,7 @@ const adminNavigationItems = [
   { name: 'Users', path: '/settings/users', icon: Users },
   { name: 'Groups', path: '/settings/groups', icon: UsersRound },
   { name: 'Connectors', path: '/settings/connectors', icon: Link2 },
+  { name: 'Branding', path: '/settings/branding', icon: Palette },
 ];
 
 export function Sidebar() {
@@ -55,10 +56,12 @@ export function Sidebar() {
 
   return (
     <div className="flex h-full w-64 flex-col border-r bg-background">
-      {/* Logo */}
+      {/* Logo - Always LUCENT branding */}
       <div className="flex h-16 items-center border-b px-6">
-        <BarChart3 className="h-6 w-6 text-primary" />
-        <span className="ml-2 text-xl font-bold">LUCENT</span>
+        <div className="flex items-center">
+          <BarChart3 className="h-6 w-6 text-primary" />
+          <span className="ml-2 text-xl font-bold">LUCENT</span>
+        </div>
       </div>
 
       {/* Navigation */}
@@ -75,7 +78,7 @@ export function Sidebar() {
                 'flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-colors',
                 isActive
                   ? 'bg-primary text-primary-foreground'
-                  : 'text-muted-foreground hover:bg-accent hover:text-accent-foreground'
+                  : 'text-muted-foreground hover:bg-muted hover:text-foreground'
               )}
             >
               <Icon className="h-5 w-5" />
@@ -85,7 +88,7 @@ export function Sidebar() {
         })}
 
         {/* Tenant Admin Links */}
-        {(user?.role === 'admin' || user?.is_super_admin) && (
+        {user?.role === 'admin' && (
           <>
             <div className="my-4 border-t" />
             <p className="px-3 text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2">
@@ -103,7 +106,7 @@ export function Sidebar() {
                     'flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-colors',
                     isActive
                       ? 'bg-primary text-primary-foreground'
-                      : 'text-muted-foreground hover:bg-accent hover:text-accent-foreground'
+                      : 'text-muted-foreground hover:bg-muted hover:text-foreground'
                   )}
                 >
                   <Icon className="h-5 w-5" />
@@ -111,23 +114,6 @@ export function Sidebar() {
                 </Link>
               );
             })}
-          </>
-        )}
-
-        {/* Super Admin Link */}
-        {user?.is_super_admin && (
-          <>
-            <div className="my-4 border-t" />
-            <Link
-              href="/admin"
-              className={cn(
-                'flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-colors',
-                'bg-red-50 text-red-700 hover:bg-red-100'
-              )}
-            >
-              <Shield className="h-5 w-5" />
-              Super Admin
-            </Link>
           </>
         )}
       </nav>

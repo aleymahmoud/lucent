@@ -91,7 +91,7 @@ export default function TenantUsersPage() {
 
   // Check if user is admin
   useEffect(() => {
-    if (user && user.role !== "admin" && !user.is_super_admin) {
+    if (user && user.role !== "admin" ) {
       router.push("/dashboard");
     }
   }, [user, router]);
@@ -215,7 +215,7 @@ export default function TenantUsersPage() {
     search || statusFilter !== "all" || approvalFilter !== "all" || roleFilter !== "all";
 
   // Don't render if not admin
-  if (user && user.role !== "admin" && !user.is_super_admin) {
+  if (user && user.role !== "admin" ) {
     return null;
   }
 
