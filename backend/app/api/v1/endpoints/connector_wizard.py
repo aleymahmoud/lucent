@@ -167,7 +167,7 @@ async def _execute_wizard_query(
             host = config.get("host", "localhost")
             port = config.get("port", 1433)
             database = config.get("database", "")
-            username = config.get("username", "")
+            username = config.get("username") or config.get("user", "")
             password = config.get("password", "")
             driver = config.get("driver", "ODBC Driver 18 for SQL Server")
             encrypt = config.get("encrypt", "yes")
@@ -291,13 +291,13 @@ async def wizard_list_tables(
             table_rows = await _execute_wizard_query(
                 connector,
                 "SELECT TABLE_SCHEMA, TABLE_NAME FROM INFORMATION_SCHEMA.TABLES "
-                "WHERE TABLE_TYPE = 'BASE TABLE' ORDER BY TABLE_SCHEMA, TABLE_NAME",
+                "WHERE TABLE_TYPE IN ('BASE TABLE', 'VIEW') ORDER BY TABLE_SCHEMA, TABLE_NAME",
             )
         elif db_type == "postgres":
             table_rows = await _execute_wizard_query(
                 connector,
                 "SELECT table_schema, table_name FROM information_schema.tables "
-                "WHERE table_type = 'BASE TABLE' AND table_schema NOT IN "
+                "WHERE table_type IN ('BASE TABLE', 'VIEW') AND table_schema NOT IN "
                 "('pg_catalog', 'information_schema') ORDER BY table_schema, table_name",
             )
         elif db_type == "mysql":
@@ -306,7 +306,7 @@ async def wizard_list_tables(
             table_rows = await _execute_wizard_query(
                 connector,
                 "SELECT TABLE_SCHEMA, TABLE_NAME FROM INFORMATION_SCHEMA.TABLES "
-                "WHERE TABLE_TYPE = 'BASE TABLE' AND TABLE_SCHEMA = %s "
+                "WHERE TABLE_TYPE IN ('BASE TABLE', 'VIEW') AND TABLE_SCHEMA = %s "
                 "ORDER BY TABLE_NAME",
                 (database,),
             )
@@ -314,7 +314,7 @@ async def wizard_list_tables(
             table_rows = await _execute_wizard_query(
                 connector,
                 "SELECT TABLE_SCHEMA, TABLE_NAME FROM INFORMATION_SCHEMA.TABLES "
-                "WHERE TABLE_TYPE = 'BASE TABLE' ORDER BY TABLE_SCHEMA, TABLE_NAME",
+                "WHERE TABLE_TYPE IN ('BASE TABLE', 'VIEW') ORDER BY TABLE_SCHEMA, TABLE_NAME",
             )
         else:
             raise HTTPException(

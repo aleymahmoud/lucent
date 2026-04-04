@@ -39,7 +39,7 @@ class SQLServerConnector(BaseConnector):
         host = cfg.get("host", "localhost")
         port = cfg.get("port", 1433)
         database = cfg.get("database", "")
-        username = cfg.get("username", "")
+        username = cfg.get("username") or cfg.get("user", "")
         password = cfg.get("password", "")
         driver = cfg.get("driver", "ODBC Driver 18 for SQL Server")
         encrypt = cfg.get("encrypt", "yes")
@@ -185,7 +185,7 @@ class SQLServerConnector(BaseConnector):
                     """
                     SELECT TABLE_SCHEMA + '.' + TABLE_NAME
                     FROM   INFORMATION_SCHEMA.TABLES
-                    WHERE  TABLE_TYPE = 'BASE TABLE'
+                    WHERE  TABLE_TYPE IN ('BASE TABLE', 'VIEW')
                     ORDER  BY TABLE_SCHEMA, TABLE_NAME
                     """
                 )
