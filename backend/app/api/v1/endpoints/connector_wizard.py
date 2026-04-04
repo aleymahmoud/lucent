@@ -169,7 +169,7 @@ async def _execute_wizard_query(
             database = config.get("database", "")
             username = config.get("username", "")
             password = config.get("password", "")
-            driver = config.get("driver", "ODBC Driver 17 for SQL Server")
+            driver = config.get("driver", "ODBC Driver 18 for SQL Server")
             encrypt = config.get("encrypt", "yes")
             trust_cert = config.get("trust_cert", "yes")
             dsn = (

@@ -255,7 +255,7 @@ async def _get_sqlserver_columns(config: Dict[str, Any]) -> List[str]:
     table = config.get('table')
     query = config.get('query')
 
-    dsn = f"DRIVER={{ODBC Driver 17 for SQL Server}};SERVER={host},{port};DATABASE={database};UID={user};PWD={password}"
+    dsn = f"DRIVER={{ODBC Driver 18 for SQL Server}};SERVER={host},{port};DATABASE={database};UID={user};PWD={password}"
 
     async with aioodbc.connect(dsn=dsn) as conn:
         async with conn.cursor() as cur:

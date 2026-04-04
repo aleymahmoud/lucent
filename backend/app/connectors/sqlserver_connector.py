@@ -40,7 +40,7 @@ class SQLServerConnector(BaseConnector):
         database = cfg.get("database", "")
         username = cfg.get("username", "")
         password = cfg.get("password", "")
-        driver = cfg.get("driver", "ODBC Driver 17 for SQL Server")
+        driver = cfg.get("driver", "ODBC Driver 18 for SQL Server")
         encrypt = cfg.get("encrypt", "yes")
         trust_cert = cfg.get("trust_cert", "yes")
         return (
