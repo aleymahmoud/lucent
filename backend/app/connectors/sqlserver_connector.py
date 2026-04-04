@@ -5,6 +5,7 @@ import logging
 from typing import Any
 
 import aioodbc
+import pyodbc
 import pandas as pd
 
 from .base import BaseConnector, validate_sql_identifier, validate_qualified_identifier
@@ -76,7 +77,7 @@ class SQLServerConnector(BaseConnector):
                 async with conn.cursor() as cur:
                     await cur.execute("SELECT 1")
             return True, f"Connected to {database} on {host}"
-        except aioodbc.Error as exc:
+        except pyodbc.Error as exc:
             msg = str(exc)
             # ODBC error codes surface as strings like "[28000]" (auth) or
             # "[08001]" (network / server not found).
