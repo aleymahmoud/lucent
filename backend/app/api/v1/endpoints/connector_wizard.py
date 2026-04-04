@@ -578,11 +578,15 @@ async def wizard_preview(
         )
 
     # Apply column_map: keys are LUCENT roles, values are remote column names.
-    # We rename remote column names → LUCENT role names where present.
+    # Rename mapped columns and keep only those.
     if body.column_map:
-        # Build reverse map: remote_col_name -> lucent_role
         reverse_map = {v: k for k, v in body.column_map.items()}
         df = df.rename(columns=reverse_map)
+        # Keep only the mapped columns
+        mapped_roles = list(body.column_map.keys())
+        available = [c for c in mapped_roles if c in df.columns]
+        if available:
+            df = df[available]
 
     df = df.where(df.notna(), other=None)
     return ConnectorFetchResponse(

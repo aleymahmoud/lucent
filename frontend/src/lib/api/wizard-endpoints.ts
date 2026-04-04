@@ -39,7 +39,7 @@ export const wizardApi = {
   setup: (
     connectorId: string,
     data: { table: string; column_map: Record<string, string>; name: string }
-  ) => api.post<WizardSetupResponse>(`/connectors/${connectorId}/wizard/setup`, data),
+  ) => api.post<WizardSetupResponse>(`/connectors/${connectorId}/wizard/setup`, data, { timeout: 120000 }),
 };
 
 // ============================================

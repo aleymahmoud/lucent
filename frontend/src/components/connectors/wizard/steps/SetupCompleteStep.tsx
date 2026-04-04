@@ -96,7 +96,7 @@ export function SetupCompleteStep({
   onComplete,
 }: SetupCompleteStepProps) {
   const [name, setName] = useState(
-    `${table.schema_name}.${table.name}`.slice(0, 80)
+    table.name.slice(0, 80)
   );
   const [result, setResult] = useState<WizardSetupResponse | null>(null);
 
