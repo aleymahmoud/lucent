@@ -26,8 +26,12 @@ from app.services.connector_service import (
     test_connector_connection,
     fetch_connector_data,
     list_connector_resources,
+    decrypt_config,
 )
 from app.core.validators import validate_uuid
+from cryptography.fernet import Fernet
+from app.config import settings
+import json
 
 router = APIRouter()
 
@@ -144,6 +148,104 @@ async def get_connector(
         created_at=connector.created_at,
         rls_config=rls_config
     )
+
+
+# ============================================
+# Create / Update / Delete Connectors
+# ============================================
+
+
+def _encrypt_config(config: dict) -> str:
+    """Encrypt connector config dict to string."""
+    config_json = json.dumps(config)
+    if hasattr(settings, 'ENCRYPTION_KEY') and settings.ENCRYPTION_KEY:
+        f = Fernet(settings.ENCRYPTION_KEY.encode())
+        return f.encrypt(config_json.encode()).decode()
+    return config_json
+
+
+@router.post("", status_code=status.HTTP_201_CREATED)
+async def create_connector(
+    data: dict,
+    current_user: User = Depends(get_current_tenant_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """Create a new connector (Tenant Admin only)"""
+    tenant_id = current_user.tenant_id
+
+    name = data.get("name")
+    conn_type = data.get("type", "").upper()
+    config = data.get("config", {})
+    is_active = data.get("is_active", True)
+
+    if not name or not conn_type:
+        raise HTTPException(status_code=400, detail="name and type are required")
+
+    encrypted_config = _encrypt_config(config)
+
+    connector = Connector(
+        tenant_id=tenant_id,
+        name=name,
+        type=conn_type,
+        config=encrypted_config,
+        is_active=is_active,
+        created_by=current_user.id,
+    )
+    db.add(connector)
+    await db.commit()
+    await db.refresh(connector)
+
+    return {"id": connector.id, "name": connector.name, "type": connector.type.value, "is_active": connector.is_active}
+
+
+@router.put("/{connector_id}")
+async def update_connector(
+    connector_id: str,
+    data: dict,
+    current_user: User = Depends(get_current_tenant_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """Update a connector (Tenant Admin only)"""
+    validate_uuid(connector_id, "connector_id")
+    tenant_id = current_user.tenant_id
+
+    connector = await db.scalar(
+        select(Connector).where(Connector.id == connector_id, Connector.tenant_id == tenant_id)
+    )
+    if not connector:
+        raise HTTPException(status_code=404, detail="Connector not found")
+
+    if "name" in data:
+        connector.name = data["name"]
+    if "config" in data:
+        connector.config = _encrypt_config(data["config"])
+    if "is_active" in data:
+        connector.is_active = data["is_active"]
+
+    await db.commit()
+    await db.refresh(connector)
+
+    return {"id": connector.id, "name": connector.name, "type": connector.type.value, "is_active": connector.is_active}
+
+
+@router.delete("/{connector_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_connector(
+    connector_id: str,
+    current_user: User = Depends(get_current_tenant_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """Delete a connector (Tenant Admin only)"""
+    validate_uuid(connector_id, "connector_id")
+    tenant_id = current_user.tenant_id
+
+    connector = await db.scalar(
+        select(Connector).where(Connector.id == connector_id, Connector.tenant_id == tenant_id)
+    )
+    if not connector:
+        raise HTTPException(status_code=404, detail="Connector not found")
+
+    await db.delete(connector)
+    await db.commit()
 
 
 # ============================================

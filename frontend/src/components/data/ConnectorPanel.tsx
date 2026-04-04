@@ -210,14 +210,31 @@ export function ConnectorPanel({ onDataFetched }: ConnectorPanelProps) {
     setTestResult(null);
 
     try {
-      // Simulate connection test (replace with actual API call)
-      await new Promise((resolve) => setTimeout(resolve, 1500));
+      // First, create the connector if it doesn't exist yet
+      const { connectorApi } = await import("@/lib/api/endpoints");
+      const connectorName = `${selectedConfig.name} - ${formData.host || formData.database || "New"}`;
+      const createRes = await connectorApi.create({
+        name: connectorName,
+        type: selectedType as string,
+        config: formData,
+        is_active: true,
+      });
+      const connectorId = createRes.id;
 
-      // For demo, always succeed
-      setTestResult({ success: true, message: "Connection successful!" });
-      toast.success("Connection test passed!");
-    } catch (err) {
-      setTestResult({ success: false, message: "Connection failed. Check your credentials." });
+      // Test the connection via API
+      const testRes = await connectorApi.test(connectorId);
+      if (testRes.success) {
+        setTestResult({ success: true, message: testRes.message || "Connection successful!" });
+        toast.success("Connection test passed!");
+      } else {
+        setTestResult({ success: false, message: testRes.message || "Connection failed." });
+        toast.error("Connection test failed");
+        // Delete the connector since test failed
+        await connectorApi.delete(connectorId);
+      }
+    } catch (err: any) {
+      const msg = err?.response?.data?.detail || "Connection failed. Check your credentials.";
+      setTestResult({ success: false, message: msg });
       toast.error("Connection test failed");
     } finally {
       setTesting(false);
@@ -229,11 +246,8 @@ export function ConnectorPanel({ onDataFetched }: ConnectorPanelProps) {
 
     setFetching(true);
     try {
-      // Simulate data fetch (replace with actual API call)
-      await new Promise((resolve) => setTimeout(resolve, 2000));
-
-      toast.success("Data fetched successfully!", {
-        description: "Your data has been imported",
+      toast.success("Connector saved!", {
+        description: "Go to Data Connectors page to set up the data source wizard.",
       });
 
       if (onDataFetched) {
@@ -243,7 +257,7 @@ export function ConnectorPanel({ onDataFetched }: ConnectorPanelProps) {
       setOpen(false);
       resetForm();
     } catch (err) {
-      toast.error("Failed to fetch data");
+      toast.error("Failed to save connector");
     } finally {
       setFetching(false);
     }
