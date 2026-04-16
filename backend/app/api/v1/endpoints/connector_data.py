@@ -22,6 +22,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.connectors.base import validate_sql_identifier
+from app.api.v1.endpoints.connector_wizard import _validate_wizard_column
 from app.core.deps import get_current_user, get_db
 from app.core.validators import validate_uuid
 from app.db.redis_client import get_redis
@@ -59,7 +60,8 @@ _PARAM_STYLE = {"sqlserver": "?", "postgres": "$1", "mysql": "%s", "snowflake": 
 def _quote_ident(name: str, db_type: str) -> str:
     qo = _QUOTE_OPEN.get(db_type, '"')
     qc = _QUOTE_CLOSE.get(db_type, '"')
-    return f"{qo}{name}{qc}"
+    escaped = name.replace(qc, qc + qc)
+    return f"{qo}{escaped}{qc}"
 
 
 def _indexed_placeholder(db_type: str, index: int) -> str:
@@ -117,6 +119,51 @@ async def _get_user_allowed_entities(
             allowed_entities.extend(group.rls_values)
 
     return list(set(allowed_entities))  # Deduplicate
+
+
+# ============================================================
+# GET /data-sources/ — list data sources available to the user
+# ============================================================
+
+@router.get("", response_model=List[dict])
+async def list_user_data_sources(
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """List all active data sources in the tenant for the current user."""
+    result = await db.execute(
+        select(ConnectorDataSource)
+        .where(
+            ConnectorDataSource.tenant_id == current_user.tenant_id,
+            ConnectorDataSource.is_active == True,
+        )
+        .options(
+            selectinload(ConnectorDataSource.connector)
+            .selectinload(Connector.rls_config)
+        )
+        .order_by(ConnectorDataSource.created_at.desc())
+    )
+    data_sources = result.scalars().all()
+
+    responses = []
+    for ds in data_sources:
+        connector = ds.connector
+        entity_ids = ds.selected_entity_ids or []
+        rls = connector.rls_config if connector else None
+        responses.append({
+            "id": ds.id,
+            "name": ds.name,
+            "connector_name": connector.name if connector else "Unknown",
+            "connector_type": connector.type.value if connector else "unknown",
+            "source_table": ds.source_table,
+            "column_map": {k: v for k, v in (ds.column_map or {}).items() if k != "rls_column"},
+            "entity_count": len(entity_ids),
+            "rls_column": rls.rls_column if rls else None,
+            "rls_enabled": rls.is_enabled if rls else False,
+            "created_at": ds.created_at.isoformat() if ds.created_at else None,
+        })
+
+    return responses
 
 
 # ============================================================
@@ -252,34 +299,41 @@ async def user_import_data(
     qs = _quote_ident(validate_sql_identifier(schema_part, "schema"), db_type)
     qt = _quote_ident(validate_sql_identifier(table_part, "table"), db_type)
 
-    # Build SELECT with mapped columns
+    # Build SELECT with mapped columns (exclude rls_column from SELECT — it's only for WHERE)
     select_parts = []
+    export_roles = []
     for role, remote_col in column_map.items():
-        qcol = _quote_ident(validate_sql_identifier(remote_col, f"col_{role}"), db_type)
+        if role == "rls_column":
+            continue  # RLS column is used for filtering, not in the output
+        qcol = _quote_ident(_validate_wizard_column(remote_col, f"col_{role}"), db_type)
         qrole = _quote_ident(role, db_type)
         select_parts.append(f"{qcol} AS {qrole}")
+        export_roles.append(role)
 
-    # Build WHERE clause
+    # Build WHERE clause — filter by RLS column (store/location), not entity_id
     where_clauses = []
-    entity_id_col = column_map.get("entity_id")
-    if entity_id_col:
-        qec = _quote_ident(entity_id_col, db_type)
-        entity_placeholders = ", ".join(
-            f"'{eid}'" for eid in allowed  # String literals for entity IDs
-        )
-        where_clauses.append(f"{qec} IN ({entity_placeholders})")
+    rls_col = column_map.get("rls_column")
+    if rls_col and allowed:
+        qrc = _quote_ident(rls_col, db_type)
+        rls_placeholders = ", ".join(f"'{v}'" for v in allowed)
+        where_clauses.append(f"{qrc} IN ({rls_placeholders})")
 
     date_col = column_map.get("date")
     if date_col:
         qdc = _quote_ident(date_col, db_type)
         if body.date_range_start:
-            where_clauses.append(f"{qdc} >= '{body.date_range_start.isoformat()}'")
+            ds = body.date_range_start.strftime("%Y-%m-%d")
+            where_clauses.append(f"{qdc} >= '{ds}'")
         if body.date_range_end:
-            where_clauses.append(f"{qdc} <= '{body.date_range_end.isoformat()}'")
+            de = body.date_range_end.strftime("%Y-%m-%d")
+            where_clauses.append(f"{qdc} <= '{de}'")
 
     sql = f"SELECT {', '.join(select_parts)} FROM {qs}.{qt}"
     if where_clauses:
         sql += " WHERE " + " AND ".join(where_clauses)
+
+    logger.info("Import SQL for user %s: %s", current_user.email, sql)
+    logger.info("RLS allowed values: %s", allowed)
 
     # Fetch data
     try:
@@ -291,10 +345,29 @@ async def user_import_data(
             detail="Failed to fetch data from the connector",
         )
 
-    row_count = len(df)
-    role_columns = list(column_map.keys())
+    # Parse date column to proper datetime
+    if "date" in df.columns:
+        df["date"] = pd.to_datetime(df["date"], errors="coerce")
 
-    # Count entities
+    # Auto-aggregate: sum volume by entity_id + date to collapse transaction rows
+    raw_count = len(df)
+    group_cols = [c for c in ["date", "entity_id", "entity_name"] if c in df.columns]
+    sum_cols = [c for c in ["volume"] if c in df.columns]
+    if group_cols and sum_cols:
+        agg_dict = {col: "sum" for col in sum_cols}
+        if "entity_name" in group_cols:
+            group_cols_no_name = [c for c in group_cols if c != "entity_name"]
+            agg_dict["entity_name"] = "first"
+            df = df.groupby(group_cols_no_name, as_index=False).agg(agg_dict)
+        else:
+            df = df.groupby(group_cols, as_index=False).agg(agg_dict)
+        df = df.sort_values(["entity_id", "date"]).reset_index(drop=True)
+        logger.info("Auto-aggregated to %d rows (%d before)", len(df), raw_count)
+
+    row_count = len(df)
+    role_columns = export_roles
+
+    # Count entities (products/SKUs)
     entity_col_name = "entity_id" if "entity_id" in df.columns else None
     entity_count = int(df[entity_col_name].nunique()) if entity_col_name and entity_col_name in df.columns else 0
 
@@ -320,6 +393,7 @@ async def user_import_data(
                 "column_count": len(role_columns),
                 "is_active": True,
                 "file_type": "connector",
+                "uploaded_by": user_id,
                 "uploaded_at": datetime.utcnow().isoformat(),
             }
             await redis.set(

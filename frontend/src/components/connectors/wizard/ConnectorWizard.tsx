@@ -5,6 +5,7 @@ import { X } from 'lucide-react';
 import {
   Dialog,
   DialogContent,
+  DialogDescription,
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
@@ -213,6 +214,9 @@ export function ConnectorWizard({
             <DialogTitle className="text-lg font-semibold">
               Setup Data Source
             </DialogTitle>
+            <DialogDescription className="sr-only">
+              Step-by-step wizard to configure a data source from your connector
+            </DialogDescription>
             <Button
               variant="ghost"
               size="icon"

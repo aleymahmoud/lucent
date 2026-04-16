@@ -279,7 +279,7 @@ export default function ForecastPage() {
         };
 
         // POST returns immediately with batch_id + status=running
-        const initial = await api.post<BatchForecastResult>("/forecast/batch", payload);
+        const initial = await api.post<BatchForecastResult>("/forecast/batch", payload, { timeout: 120000 });
         setBatchResult(initial);
 
         // Poll for updates every 3 seconds
@@ -365,7 +365,7 @@ export default function ForecastPage() {
           payload.cross_validation = { enabled: false, folds: 5, method: "rolling" };
         }
 
-        const result = await api.post<ForecastResult>("/forecast/run", payload);
+        const result = await api.post<ForecastResult>("/forecast/run", payload, { timeout: 120000 });
 
         setForecastResult(result);
 

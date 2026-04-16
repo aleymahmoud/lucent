@@ -105,6 +105,7 @@ export function SetupCompleteStep({
     entity_id: columnMap.entity_id,
     volume: columnMap.volume,
     ...(columnMap.entity_name ? { entity_name: columnMap.entity_name } : {}),
+    ...(columnMap.rls_column ? { rls_column: columnMap.rls_column } : {}),
   };
 
   const { mutate: runSetup, isPending } = useMutation({
@@ -121,8 +122,15 @@ export function SetupCompleteStep({
       });
     },
     onError: (err: unknown) => {
-      const message =
-        err instanceof Error ? err.message : 'Setup failed';
+      let message = 'Setup failed';
+      if (err && typeof err === 'object' && 'response' in err) {
+        const axiosErr = err as { response?: { data?: { detail?: { message?: string } | string; message?: string } } };
+        const detail = axiosErr.response?.data?.detail;
+        message = (typeof detail === 'string' ? detail : detail?.message) ||
+          axiosErr.response?.data?.message || message;
+      } else if (err instanceof Error) {
+        message = err.message;
+      }
       toast.error('Setup failed', { description: message });
     },
   });
@@ -169,7 +177,7 @@ export function SetupCompleteStep({
             variant="outline"
             asChild
           >
-            <a href={`/lucent/${tenantSlug}/settings`}>
+            <a href={`/lucent/${tenantSlug}/settings/connectors`}>
               <ExternalLink className="h-4 w-4 mr-1.5" />
               Configure RLS
             </a>
@@ -195,7 +203,7 @@ export function SetupCompleteStep({
         <div className="flex gap-2">
           <span className="text-muted-foreground w-28 shrink-0">Table:</span>
           <span className="font-mono">
-            {table.schema_name}.{table.name}
+            {table.name}
           </span>
         </div>
         <div className="flex gap-2">

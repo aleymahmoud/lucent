@@ -88,10 +88,55 @@ _PARAM_STYLE: Dict[str, str] = {
 
 
 def _quote_ident(name: str, db_type: str) -> str:
-    """Wrap *name* in the correct identifier-quoting characters for *db_type*."""
+    """Wrap *name* in the correct identifier-quoting characters for *db_type*.
+
+    Also escapes embedded close-quote characters to prevent breakout:
+      SQL Server:  ] → ]]
+      Others:      " → ""  (or ` for MySQL/BigQuery — backtick has no escape,
+                   but we reject it in _validate_wizard_column).
+    """
     qo = _QUOTE_OPEN.get(db_type, '"')
     qc = _QUOTE_CLOSE.get(db_type, '"')
-    return f"{qo}{name}{qc}"
+    escaped = name.replace(qc, qc + qc)
+    return f"{qo}{escaped}{qc}"
+
+
+# Regex that rejects SQL injection patterns while allowing real-world column
+# names (spaces, hyphens, Unicode, etc.).  The _quote_ident helper handles
+# quoting; we just block dangerous sequences.
+import re as _re
+
+_DANGEROUS_COL_RE = _re.compile(
+    r"[;'\"\[\]`\\]"          # quote chars, semicolons, backslash
+    r"|--"                     # SQL line comment
+    r"|/\*"                    # SQL block comment
+    r"|\bEXEC\b"              # common injection keyword
+    r"|\bDROP\b"
+    r"|\bINSERT\b"
+    r"|\bDELETE\b"
+    r"|\bUPDATE\b"
+    r"|\bUNION\b",
+    _re.IGNORECASE,
+)
+
+
+def _validate_wizard_column(name: str, label: str) -> str:
+    """Validate a column name from the wizard.
+
+    More permissive than validate_sql_identifier — allows spaces, hyphens,
+    Unicode, etc. because real databases have these.  Rejects injection
+    patterns since the value will be interpolated via _quote_ident.
+    """
+    if not name or not name.strip():
+        raise ValueError(f"{label} must not be empty")
+    stripped = name.strip()
+    if len(stripped) > 255:
+        raise ValueError(f"{label} exceeds maximum length of 255 characters")
+    if _DANGEROUS_COL_RE.search(stripped):
+        raise ValueError(
+            f"Invalid {label}: {stripped!r} contains disallowed characters or keywords."
+        )
+    return stripped
 
 
 def _limit_clause(db_type: str, n: int) -> Tuple[str, str]:
@@ -147,6 +192,7 @@ async def _execute_wizard_query(
     connector: Connector,
     sql: str,
     params: tuple = (),
+    timeout_seconds: int = 60,
 ) -> List[Any]:
     """
     Execute a raw SQL query against the connector using its native driver and
@@ -157,11 +203,17 @@ async def _execute_wizard_query(
     that are not SELECT-from-a-table operations.
 
     Raises HTTPException 502 on any connector-level failure.
+    Raises HTTPException 504 if the query exceeds *timeout_seconds*.
     """
+    import asyncio
+    import time as _time
+
     db_type = connector.type.value
     config = decrypt_config(connector.config)
 
-    try:
+    t0 = _time.monotonic()
+
+    async def _run_query() -> List[Any]:
         if db_type == "sqlserver":
             import aioodbc
             host = config.get("host", "localhost")
@@ -226,7 +278,6 @@ async def _execute_wizard_query(
                 conn_my.close()
 
         elif db_type == "snowflake":
-            import asyncio
             import snowflake.connector
             account = config.get("account")
             user_sf = config.get("user") or config.get("username")
@@ -252,12 +303,34 @@ async def _execute_wizard_query(
         else:
             raise ValueError(f"Raw query not supported for connector type: {db_type}")
 
+    try:
+        result = await asyncio.wait_for(_run_query(), timeout=timeout_seconds)
+        elapsed = _time.monotonic() - t0
+        logger.info(
+            "Wizard query completed on connector %s (%s) in %.1fs",
+            connector.id, db_type, elapsed,
+        )
+        return result
+    except asyncio.TimeoutError:
+        elapsed = _time.monotonic() - t0
+        logger.error(
+            "Wizard query timed out on connector %s (%s) after %.1fs (limit %ds)",
+            connector.id, db_type, elapsed, timeout_seconds,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_504_GATEWAY_TIMEOUT,
+            detail={
+                "code": "QUERY_TIMEOUT",
+                "message": f"The query took longer than {timeout_seconds}s. Try a smaller table or add an index.",
+            },
+        )
     except HTTPException:
         raise
     except Exception as exc:
+        elapsed = _time.monotonic() - t0
         logger.error(
-            "Wizard query failed on connector %s (%s): %s",
-            connector.id, db_type, exc,
+            "Wizard query failed on connector %s (%s) after %.1fs: %s",
+            connector.id, db_type, elapsed, exc,
         )
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
@@ -336,64 +409,58 @@ async def wizard_list_tables(
             },
         )
 
+    # Batch-fetch row counts in a SINGLE query instead of N+1 per-table queries
+    row_count_map: Dict[str, int] = {}
+    try:
+        if db_type == "sqlserver":
+            rc_rows = await _execute_wizard_query(
+                connector,
+                "SELECT s.name + '.' + t.name, SUM(p.rows) "
+                "FROM sys.tables t "
+                "JOIN sys.schemas s ON t.schema_id = s.schema_id "
+                "JOIN sys.partitions p ON t.object_id = p.object_id AND p.index_id IN (0, 1) "
+                "GROUP BY s.name, t.name",
+            )
+            for rc_row in rc_rows:
+                if rc_row[1] is not None:
+                    row_count_map[str(rc_row[0])] = int(rc_row[1])
+        elif db_type == "postgres":
+            rc_rows = await _execute_wizard_query(
+                connector,
+                "SELECT n.nspname || '.' || c.relname, c.reltuples::bigint "
+                "FROM pg_class c "
+                "JOIN pg_namespace n ON n.oid = c.relnamespace "
+                "WHERE c.relkind IN ('r', 'v') "
+                "AND n.nspname NOT IN ('pg_catalog', 'information_schema')",
+            )
+            for rc_row in rc_rows:
+                if rc_row[1] is not None:
+                    row_count_map[str(rc_row[0])] = max(0, int(rc_row[1]))
+        elif db_type in ("mysql", "snowflake"):
+            # INFORMATION_SCHEMA.TABLES already has TABLE_ROWS / ROW_COUNT
+            col_name = "TABLE_ROWS" if db_type == "mysql" else "ROW_COUNT"
+            rc_rows = await _execute_wizard_query(
+                connector,
+                f"SELECT TABLE_SCHEMA, TABLE_NAME, {col_name} "
+                f"FROM INFORMATION_SCHEMA.TABLES "
+                f"WHERE TABLE_TYPE IN ('BASE TABLE', 'VIEW')",
+            )
+            for rc_row in rc_rows:
+                key = f"{rc_row[0]}.{rc_row[1]}"
+                if rc_row[2] is not None:
+                    row_count_map[key] = int(rc_row[2])
+    except Exception as rc_exc:
+        logger.debug("Batch row count query failed (non-blocking): %s", rc_exc)
+
     results: List[WizardTableResponse] = []
     for row in table_rows:
         schema_name, table_name = str(row[0]), str(row[1])
         qualified = f"{schema_name}.{table_name}"
-
-        # Attempt row count — non-blocking
-        row_count: Optional[int] = None
-        try:
-            if db_type == "sqlserver":
-                rc_rows = await _execute_wizard_query(
-                    connector,
-                    "SELECT SUM(rows) FROM sys.partitions "
-                    "WHERE object_id = OBJECT_ID(?) AND index_id IN (0, 1)",
-                    (qualified,),
-                )
-                if rc_rows and rc_rows[0][0] is not None:
-                    row_count = int(rc_rows[0][0])
-            elif db_type in ("postgres", "mysql", "snowflake"):
-                # Use reltuples / TABLE_ROWS / ROW_COUNT statistics — best effort
-                if db_type == "postgres":
-                    rc_rows = await _execute_wizard_query(
-                        connector,
-                        "SELECT reltuples::bigint FROM pg_class c "
-                        "JOIN pg_namespace n ON n.oid = c.relnamespace "
-                        "WHERE n.nspname = $1 AND c.relname = $2",
-                        (schema_name, table_name),
-                    )
-                    if rc_rows and rc_rows[0][0] is not None:
-                        row_count = max(0, int(rc_rows[0][0]))
-                elif db_type == "mysql":
-                    rc_rows = await _execute_wizard_query(
-                        connector,
-                        "SELECT TABLE_ROWS FROM INFORMATION_SCHEMA.TABLES "
-                        "WHERE TABLE_SCHEMA = %s AND TABLE_NAME = %s",
-                        (schema_name, table_name),
-                    )
-                    if rc_rows and rc_rows[0][0] is not None:
-                        row_count = int(rc_rows[0][0])
-                elif db_type == "snowflake":
-                    # Snowflake: use ROW_COUNT from information_schema
-                    rc_rows = await _execute_wizard_query(
-                        connector,
-                        "SELECT ROW_COUNT FROM INFORMATION_SCHEMA.TABLES "
-                        "WHERE TABLE_SCHEMA = %s AND TABLE_NAME = %s",
-                        (schema_name, table_name),
-                    )
-                    if rc_rows and rc_rows[0][0] is not None:
-                        row_count = int(rc_rows[0][0])
-        except Exception as rc_exc:
-            logger.debug(
-                "Row count query failed for %s (non-blocking): %s", qualified, rc_exc
-            )
-
         results.append(
             WizardTableResponse(
                 name=qualified,
                 schema_name=schema_name,
-                row_count=row_count,
+                row_count=row_count_map.get(qualified),
             )
         )
 
@@ -704,6 +771,10 @@ async def wizard_setup(
       3. Auto-create ConnectorRLS with rls_column = entity_id mapping.
       4. Return entity list so admin can assign to groups via RLS UI.
     """
+    import time as _time
+    _setup_t0 = _time.monotonic()
+    logger.info("wizard_setup START connector=%s table=%s", connector_id, body.table)
+
     connector = await _resolve_connector(connector_id, current_user.tenant_id, db)
     db_type = connector.type.value
     tenant_id = str(current_user.tenant_id)
@@ -723,8 +794,9 @@ async def wizard_setup(
         validate_sql_identifier(schema_part, "schema")
         validate_sql_identifier(table_part, "table")
         for role, remote_col in body.column_map.items():
-            validate_sql_identifier(remote_col, f"column_map[{role!r}]")
+            _validate_wizard_column(remote_col, f"column_map[{role!r}]")
     except ValueError as exc:
+        logger.warning("Setup validation failed for connector %s: %s (body=%s)", connector_id, exc, body.dict())
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail={"code": "INVALID_IDENTIFIER", "message": str(exc)},
@@ -740,62 +812,84 @@ async def wizard_setup(
             detail={"code": "MISSING_ENTITY_ID", "message": "column_map must include 'entity_id'"},
         )
 
+    # RLS column is separate from entity_id — it controls data access (e.g. store/location)
+    rls_col = body.column_map.get("rls_column")
+    if not rls_col:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={"code": "MISSING_RLS_COLUMN", "message": "column_map must include 'rls_column'"},
+        )
+
     qs = _quote_ident(schema_part, db_type)
     qt = _quote_ident(table_part, db_type)
-    qid = _quote_ident(entity_id_col, db_type)
 
-    if entity_name_col:
-        qname = _quote_ident(entity_name_col, db_type)
-        sql = (
-            f"SELECT {qid}, {qname}, COUNT(*) AS cnt "
-            f"FROM {qs}.{qt} "
-            f"GROUP BY {qid}, {qname} "
-            f"ORDER BY cnt DESC"
-        )
+    # ---- Extract RLS values (stores/locations) ----
+    # Use a two-step approach to avoid a full GROUP BY scan on views:
+    #   Step 1: Get distinct RLS values (fast — optimizer can often short-circuit)
+    #   Step 2: Optionally get approximate counts from a sample (non-blocking)
+    qrls = _quote_ident(rls_col, db_type)
+
+    # Step 1: DISTINCT values only — much faster than GROUP BY + COUNT on views
+    if db_type in _USE_TOP:
+        distinct_sql = f"SELECT DISTINCT TOP 1000 {qrls} FROM {qs}.{qt} ORDER BY {qrls}"
     else:
-        sql = (
-            f"SELECT {qid}, COUNT(*) AS cnt "
-            f"FROM {qs}.{qt} "
-            f"GROUP BY {qid} "
-            f"ORDER BY cnt DESC"
-        )
+        distinct_sql = f"SELECT DISTINCT {qrls} FROM {qs}.{qt} ORDER BY {qrls} LIMIT 1000"
 
     try:
-        rows = await _execute_wizard_query(connector, sql)
+        rls_rows = await _execute_wizard_query(connector, distinct_sql, timeout_seconds=60)
     except HTTPException:
         raise
     except Exception as exc:
-        logger.error("Entity extraction failed for connector %s: %s", connector_id, exc)
+        logger.error("RLS value extraction failed for connector %s: %s", connector_id, exc)
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail={
-                "code": "ENTITY_EXTRACTION_FAILED",
-                "message": "Failed to extract entities from the data source",
+                "code": "RLS_EXTRACTION_FAILED",
+                "message": "Failed to extract RLS values (stores/locations) from the data source",
             },
         )
 
-    entities: List[WizardEntityResponse] = []
-    all_entity_ids: List[str] = []
-    for row in rows:
-        if entity_name_col:
-            eid, ename, count = row[0], row[1], row[2]
+    # Step 2: Try to get approximate counts from a sample (non-blocking)
+    # Sample 50K rows and GROUP BY — gives approximate distribution without full scan
+    count_map: Dict[str, int] = {}
+    try:
+        if db_type in _USE_TOP:
+            sample_sql = (
+                f"SELECT {qrls}, COUNT(*) AS cnt "
+                f"FROM (SELECT TOP 50000 {qrls} FROM {qs}.{qt}) AS _sample "
+                f"GROUP BY {qrls}"
+            )
         else:
-            eid, count = row[0], row[1]
-            ename = None
+            sample_sql = (
+                f"SELECT {qrls}, COUNT(*) AS cnt "
+                f"FROM (SELECT {qrls} FROM {qs}.{qt} LIMIT 50000) AS _sample "
+                f"GROUP BY {qrls}"
+            )
+        sample_rows = await _execute_wizard_query(connector, sample_sql, timeout_seconds=30)
+        for sr in sample_rows:
+            if sr[0] is not None:
+                count_map[str(sr[0])] = int(sr[1]) if sr[1] is not None else 0
+    except Exception as count_exc:
+        logger.debug("Approximate count query failed (non-blocking): %s", count_exc)
 
-        eid_str = str(eid) if eid is not None else ""
-        all_entity_ids.append(eid_str)
+    # RLS values = store/location IDs for group assignment
+    entities: List[WizardEntityResponse] = []
+    all_rls_values: List[str] = []
+    for row in rls_rows:
+        val = row[0]
+        val_str = str(val) if val is not None else ""
+        all_rls_values.append(val_str)
         entities.append(
             WizardEntityResponse(
-                id=eid_str,
-                name=str(ename) if ename is not None else None,
-                count=int(count) if count is not None else 0,
+                id=val_str,
+                name=None,
+                count=count_map.get(val_str, 0),
             )
         )
 
     # ---- Persist DB records ----
     try:
-        # ConnectorDataSource — saves the "recipe" with all entities
+        # ConnectorDataSource — saves the "recipe" with RLS values (stores)
         data_source = ConnectorDataSource(
             id=str(uuid.uuid4()),
             tenant_id=tenant_id,
@@ -803,22 +897,22 @@ async def wizard_setup(
             name=body.name,
             source_table=body.table,
             column_map=body.column_map,
-            selected_entity_ids=all_entity_ids,
+            selected_entity_ids=all_rls_values,  # stores RLS values (stores), not product IDs
             created_by=user_id,
         )
         db.add(data_source)
 
-        # Auto-create ConnectorRLS — set rls_column to the entity_id column
+        # Auto-create ConnectorRLS — set rls_column to the RLS column (store/location)
         existing_rls = await db.scalar(
             select(ConnectorRLS).where(ConnectorRLS.connector_id == connector_id)
         )
         if existing_rls:
-            existing_rls.rls_column = entity_id_col
+            existing_rls.rls_column = rls_col
             existing_rls.is_enabled = True
         else:
             rls_config = ConnectorRLS(
                 connector_id=connector_id,
-                rls_column=entity_id_col,
+                rls_column=rls_col,
                 is_enabled=True,
             )
             db.add(rls_config)
@@ -840,10 +934,16 @@ async def wizard_setup(
             },
         )
 
+    _setup_elapsed = _time.monotonic() - _setup_t0
+    logger.info(
+        "wizard_setup DONE connector=%s ds=%s entities=%d elapsed=%.1fs",
+        connector_id, data_source.id, len(entities), _setup_elapsed,
+    )
+
     return WizardSetupResponse(
         data_source_id=str(data_source.id),
         entities=entities,
-        rls_column=entity_id_col,
+        rls_column=rls_col,
         entity_count=len(entities),
     )
 

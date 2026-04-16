@@ -56,7 +56,7 @@ class ConnectorDataSource(Base):
 
     # Relationships
     tenant = relationship("Tenant", backref="connector_data_sources")
-    connector = relationship("Connector", backref="data_sources")
+    connector = relationship("Connector", back_populates="data_sources")
     creator = relationship("User", backref="created_data_sources", foreign_keys=[created_by])
 
     def __repr__(self):

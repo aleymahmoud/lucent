@@ -13,9 +13,11 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Loader2, Replace, Plus, X, CheckCircle2 } from "lucide-react";
 import { api } from "@/lib/api/client";
 import { toast } from "sonner";
+import { ConditionalReplacer } from "./ConditionalReplacer";
 
 type MatchType = "exact" | "contains" | "regex";
 
@@ -151,6 +153,23 @@ export function ValueReplacer({
         <CardDescription>Replace specific values with custom values</CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
+        <Tabs defaultValue="find-replace">
+          <TabsList className="grid grid-cols-2 w-full">
+            <TabsTrigger value="find-replace">Find &amp; Replace</TabsTrigger>
+            <TabsTrigger value="conditional">Conditional (Time Series)</TabsTrigger>
+          </TabsList>
+
+          <TabsContent value="conditional" className="mt-4">
+            <ConditionalReplacer
+              datasetId={datasetId}
+              entityId={entityId}
+              entityColumn={entityColumn}
+              columns={availableColumns}
+              onProcessingComplete={onProcessingComplete}
+            />
+          </TabsContent>
+
+          <TabsContent value="find-replace" className="mt-4 space-y-4">
         {/* Add Rule Form */}
         <div className="space-y-4 p-4 border rounded-md bg-muted/30">
           <div className="grid grid-cols-2 gap-4">
@@ -286,6 +305,8 @@ export function ValueReplacer({
             `Apply ${rules.length} Replacement Rule${rules.length !== 1 ? "s" : ""}`
           )}
         </Button>
+          </TabsContent>
+        </Tabs>
       </CardContent>
     </Card>
   );

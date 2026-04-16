@@ -13,7 +13,8 @@ from app.schemas.preprocessing import (
     MissingValueMethod, DuplicateMethod, OutlierMethod, OutlierAction,
     AggregationFrequency, AggregationMethod,
     MissingValuesRequest, DuplicatesRequest, OutlierRequest,
-    ValueReplacementRequest, TimeAggregationRequest,
+    ValueReplacementRequest, ConditionalReplacementRequest, ConditionalReplacementPreview,
+    TimeAggregationRequest,
     EntityInfo, EntityStatsResponse, MissingValuesAnalysis,
     OutlierInfo, PreprocessingResultResponse
 )
@@ -155,7 +156,28 @@ class PreprocessingService:
         entity_id: str,
         entity_column: Optional[str] = None
     ) -> Optional[pd.DataFrame]:
-        """Get data for a specific entity"""
+        """Get data for a specific entity, checking per-entity preprocessed cache first"""
+        # Check for per-entity preprocessed data first
+        if entity_id and entity_id != "All Data":
+            try:
+                redis = await get_redis()
+                if redis:
+                    entity_key = f"{REDIS_PREPROCESSED_PREFIX}{dataset_id}:{entity_id}"
+                    data = await redis.get(entity_key)
+                    if data:
+                        if isinstance(data, bytes):
+                            data = data.decode('utf-8')
+                        parsed = json.loads(data)
+                        if isinstance(parsed, list):
+                            return pd.DataFrame(parsed)
+                        elif isinstance(parsed, dict) and 'columns' in parsed:
+                            from io import StringIO
+                            return pd.read_json(StringIO(data if isinstance(data, str) else json.dumps(parsed)), orient='split')
+                        else:
+                            return pd.DataFrame(parsed)
+            except Exception as e:
+                logger.debug(f"No per-entity preprocessed data for {entity_id}: {e}")
+
         df = await self.get_dataset_dataframe(dataset_id)
         if df is None:
             return None
@@ -166,7 +188,8 @@ class PreprocessingService:
         if entity_column not in df.columns:
             return df
 
-        return df[df[entity_column] == entity_id].copy()
+        # Compare as strings to handle int/str mismatch
+        return df[df[entity_column].astype(str) == str(entity_id)].copy()
 
     async def get_entity_stats(
         self,
@@ -302,6 +325,24 @@ class PreprocessingService:
 
         rows_before = len(df)
         columns = request.columns or df.columns.tolist()
+        # Filter to columns that actually exist in the DataFrame
+        columns = [c for c in columns if c in df.columns]
+        # Capture missing count before processing for accurate rows_affected
+        missing_before = int(df[columns].isnull().sum().sum())
+
+        # Order-dependent methods need date sorting
+        order_dependent = (
+            MissingValueMethod.FORWARD_FILL,
+            MissingValueMethod.BACKWARD_FILL,
+            MissingValueMethod.LINEAR_INTERPOLATE,
+            MissingValueMethod.SPLINE_INTERPOLATE,
+        )
+        date_col = self._detect_date_column(df)
+        if date_col and request.method in order_dependent:
+            df = df.sort_values(date_col).reset_index(drop=True)
+
+        # Detect entity column for per-entity grouping (dataset-wide mode only)
+        entity_col = None if entity_id else self._detect_entity_column(df)
 
         try:
             if request.method == MissingValueMethod.DROP:
@@ -311,31 +352,78 @@ class PreprocessingService:
             elif request.method == MissingValueMethod.FILL_MEAN:
                 for col in columns:
                     if pd.api.types.is_numeric_dtype(df[col]):
-                        df[col] = df[col].fillna(df[col].mean())
+                        if entity_col:
+                            df[col] = df.groupby(entity_col)[col].transform(
+                                lambda g: g.fillna(g.mean())
+                            )
+                        else:
+                            df[col] = df[col].fillna(df[col].mean())
             elif request.method == MissingValueMethod.FILL_MEDIAN:
                 for col in columns:
                     if pd.api.types.is_numeric_dtype(df[col]):
-                        df[col] = df[col].fillna(df[col].median())
+                        if entity_col:
+                            df[col] = df.groupby(entity_col)[col].transform(
+                                lambda g: g.fillna(g.median())
+                            )
+                        else:
+                            df[col] = df[col].fillna(df[col].median())
             elif request.method == MissingValueMethod.FILL_MODE:
                 for col in columns:
-                    mode_val = df[col].mode()
-                    if len(mode_val) > 0:
-                        df[col] = df[col].fillna(mode_val.iloc[0])
+                    if entity_col:
+                        def _fill_mode(g):
+                            mode_vals = g.mode()
+                            if len(mode_vals) > 0:
+                                return g.fillna(mode_vals.iloc[0])
+                            return g
+                        df[col] = df.groupby(entity_col)[col].transform(_fill_mode)
+                    else:
+                        mode_val = df[col].mode()
+                        if len(mode_val) > 0:
+                            df[col] = df[col].fillna(mode_val.iloc[0])
             elif request.method == MissingValueMethod.FORWARD_FILL:
-                df[columns] = df[columns].ffill()
+                if entity_col:
+                    for col in columns:
+                        df[col] = df.groupby(entity_col)[col].transform(lambda g: g.ffill())
+                else:
+                    df[columns] = df[columns].ffill()
             elif request.method == MissingValueMethod.BACKWARD_FILL:
-                df[columns] = df[columns].bfill()
+                if entity_col:
+                    for col in columns:
+                        df[col] = df.groupby(entity_col)[col].transform(lambda g: g.bfill())
+                else:
+                    df[columns] = df[columns].bfill()
             elif request.method == MissingValueMethod.LINEAR_INTERPOLATE:
                 for col in columns:
                     if pd.api.types.is_numeric_dtype(df[col]):
-                        df[col] = df[col].interpolate(method='linear')
+                        if entity_col:
+                            df[col] = df.groupby(entity_col)[col].transform(
+                                lambda g: g.interpolate(method='linear').bfill().ffill() if g.notna().sum() >= 2 else g
+                            )
+                        else:
+                            if df[col].notna().sum() >= 2:
+                                df[col] = df[col].interpolate(method='linear').bfill().ffill()
             elif request.method == MissingValueMethod.SPLINE_INTERPOLATE:
                 for col in columns:
                     if pd.api.types.is_numeric_dtype(df[col]):
-                        df[col] = df[col].interpolate(method='spline', order=2)
+                        if entity_col:
+                            def _spline_or_fallback(g):
+                                non_null = g.notna().sum()
+                                if non_null >= 3:
+                                    return g.interpolate(method='spline', order=2).bfill().ffill()
+                                elif non_null >= 2:
+                                    return g.interpolate(method='linear').bfill().ffill()
+                                return g
+                            df[col] = df.groupby(entity_col)[col].transform(_spline_or_fallback)
+                        else:
+                            non_null = df[col].notna().sum()
+                            if non_null >= 3:
+                                df[col] = df[col].interpolate(method='spline', order=2).bfill().ffill()
+                            elif non_null >= 2:
+                                df[col] = df[col].interpolate(method='linear').bfill().ffill()
 
             rows_after = len(df)
-            rows_affected = rows_before - rows_after if request.method == MissingValueMethod.DROP else int(df.isnull().sum().sum())
+            missing_after = int(df[columns].isnull().sum().sum())
+            rows_affected = (rows_before - rows_after) if request.method == MissingValueMethod.DROP else (missing_before - missing_after)
 
             # Save preprocessed data
             await self.save_preprocessed_data(dataset_id, df, entity_id)
@@ -375,6 +463,13 @@ class PreprocessingService:
         if df is None:
             return {"duplicate_count": 0, "duplicate_percentage": 0}
 
+        # Auto-detect Entity+Date columns as default subset (matches old app behavior)
+        if not subset:
+            entity_col = self._detect_entity_column(df)
+            date_col = self._detect_date_column(df)
+            if entity_col and date_col:
+                subset = [entity_col, date_col]
+
         duplicates = df.duplicated(subset=subset, keep=False)
         duplicate_count = int(duplicates.sum())
 
@@ -405,21 +500,32 @@ class PreprocessingService:
 
         rows_before = len(df)
 
+        # Auto-detect Entity+Date columns as default subset (matches old app behavior)
+        subset = request.subset
+        if not subset:
+            entity_col = self._detect_entity_column(df)
+            date_col = self._detect_date_column(df)
+            if entity_col and date_col:
+                subset = [entity_col, date_col]
+
         try:
-            if request.method == DuplicateMethod.DROP_FIRST:
-                df = df.drop_duplicates(subset=request.subset, keep='last')
-            elif request.method == DuplicateMethod.DROP_LAST:
-                df = df.drop_duplicates(subset=request.subset, keep='first')
-            elif request.method == DuplicateMethod.DROP_ALL:
-                df = df.drop_duplicates(subset=request.subset, keep=False)
+            if request.method == DuplicateMethod.KEEP_ALL:
+                pass  # No-op, keep all rows
             elif request.method == DuplicateMethod.KEEP_FIRST:
-                df = df.drop_duplicates(subset=request.subset, keep='first')
+                df = df.drop_duplicates(subset=subset, keep='first')
             elif request.method == DuplicateMethod.KEEP_LAST:
-                df = df.drop_duplicates(subset=request.subset, keep='last')
-            elif request.method == DuplicateMethod.AVERAGE:
-                if request.subset:
-                    numeric_cols = df.select_dtypes(include=[np.number]).columns.tolist()
-                    df = df.groupby(request.subset, as_index=False)[numeric_cols].mean()
+                df = df.drop_duplicates(subset=subset, keep='last')
+            elif request.method == DuplicateMethod.DROP_ALL:
+                df = df.drop_duplicates(subset=subset, keep=False)
+            elif request.method in (DuplicateMethod.AGGREGATE_SUM, DuplicateMethod.AGGREGATE_MEAN):
+                if subset:
+                    agg_func = 'sum' if request.method == DuplicateMethod.AGGREGATE_SUM else 'mean'
+                    numeric_cols = [c for c in df.select_dtypes(include=[np.number]).columns if c not in subset]
+                    non_numeric_cols = [c for c in df.columns if c not in subset and c not in numeric_cols]
+                    # Build aggregation: numeric cols get sum/mean, non-numeric get first value
+                    agg_dict = {c: agg_func for c in numeric_cols}
+                    agg_dict.update({c: 'first' for c in non_numeric_cols})
+                    df = df.groupby(subset, as_index=False).agg(agg_dict)
 
             rows_after = len(df)
             await self.save_preprocessed_data(dataset_id, df, entity_id)
@@ -443,6 +549,25 @@ class PreprocessingService:
     # Outliers
     # ============================================
 
+    def _compute_outlier_bounds(
+        self, col_data: pd.Series, method: 'OutlierMethod', threshold: float,
+        lower_percentile: float = 0.01, upper_percentile: float = 0.99
+    ) -> tuple:
+        """Compute outlier bounds for a single column/group"""
+        if method == OutlierMethod.IQR:
+            q1 = col_data.quantile(0.25)
+            q3 = col_data.quantile(0.75)
+            iqr = q3 - q1
+            return q1 - threshold * iqr, q3 + threshold * iqr
+        elif method == OutlierMethod.ZSCORE:
+            mean = col_data.mean()
+            std = col_data.std()
+            if std == 0:
+                return mean, mean
+            return mean - threshold * std, mean + threshold * std
+        else:  # percentile
+            return col_data.quantile(lower_percentile), col_data.quantile(upper_percentile)
+
     async def detect_outliers(
         self,
         dataset_id: str,
@@ -450,7 +575,7 @@ class PreprocessingService:
         entity_id: Optional[str] = None,
         entity_column: Optional[str] = None
     ) -> Dict[str, Any]:
-        """Detect outliers in dataset"""
+        """Detect outliers in dataset, per-entity when in dataset-wide mode"""
         if entity_id:
             df = await self.get_entity_data(dataset_id, entity_id, entity_column)
         else:
@@ -461,6 +586,8 @@ class PreprocessingService:
 
         total_rows = len(df)
         columns = request.columns or df.select_dtypes(include=[np.number]).columns.tolist()
+        # Per-entity detection when processing whole dataset
+        entity_col = None if entity_id else self._detect_entity_column(df)
         outlier_info = []
         total_outliers = 0
 
@@ -472,22 +599,22 @@ class PreprocessingService:
             if len(col_data) == 0:
                 continue
 
-            if request.method == OutlierMethod.IQR:
-                q1 = col_data.quantile(0.25)
-                q3 = col_data.quantile(0.75)
-                iqr = q3 - q1
-                lower_bound = q1 - request.threshold * iqr
-                upper_bound = q3 + request.threshold * iqr
-            elif request.method == OutlierMethod.ZSCORE:
-                mean = col_data.mean()
-                std = col_data.std()
-                lower_bound = mean - request.threshold * std
-                upper_bound = mean + request.threshold * std
-            else:  # percentile
-                lower_bound = col_data.quantile(request.lower_percentile)
-                upper_bound = col_data.quantile(request.upper_percentile)
+            # Build outlier mask per-entity or globally
+            if entity_col:
+                outlier_mask = pd.Series(False, index=df.index)
+                for _, group in df.groupby(entity_col):
+                    g_data = group[col].dropna()
+                    if len(g_data) == 0:
+                        continue
+                    lb, ub = self._compute_outlier_bounds(g_data, request.method, request.threshold, request.lower_percentile, request.upper_percentile)
+                    g_mask = (group[col] < lb) | (group[col] > ub)
+                    outlier_mask.loc[group.index] = g_mask
+                # Use global bounds for display (average of per-entity bounds)
+                lower_bound, upper_bound = self._compute_outlier_bounds(col_data, request.method, request.threshold, request.lower_percentile, request.upper_percentile)
+            else:
+                lower_bound, upper_bound = self._compute_outlier_bounds(col_data, request.method, request.threshold, request.lower_percentile, request.upper_percentile)
+                outlier_mask = (df[col] < lower_bound) | (df[col] > upper_bound)
 
-            outlier_mask = (df[col] < lower_bound) | (df[col] > upper_bound)
             outlier_count = int(outlier_mask.sum())
             total_outliers += outlier_count
 
@@ -515,7 +642,7 @@ class PreprocessingService:
         entity_id: Optional[str] = None,
         entity_column: Optional[str] = None
     ) -> PreprocessingResultResponse:
-        """Handle outliers in dataset"""
+        """Handle outliers in dataset, per-entity when in dataset-wide mode"""
         if entity_id:
             df = await self.get_entity_data(dataset_id, entity_id, entity_column)
         else:
@@ -529,7 +656,8 @@ class PreprocessingService:
 
         rows_before = len(df)
         columns = request.columns or df.select_dtypes(include=[np.number]).columns.tolist()
-        rows_affected = 0
+        entity_col = None if entity_id else self._detect_entity_column(df)
+        total_affected = 0
 
         try:
             for col in columns:
@@ -540,33 +668,76 @@ class PreprocessingService:
                 if len(col_data) == 0:
                     continue
 
-                if request.method == OutlierMethod.IQR:
-                    q1 = col_data.quantile(0.25)
-                    q3 = col_data.quantile(0.75)
-                    iqr = q3 - q1
-                    lower_bound = q1 - request.threshold * iqr
-                    upper_bound = q3 + request.threshold * iqr
-                elif request.method == OutlierMethod.ZSCORE:
-                    mean = col_data.mean()
-                    std = col_data.std()
-                    lower_bound = mean - request.threshold * std
-                    upper_bound = mean + request.threshold * std
+                # Build outlier mask — per-entity or global
+                if entity_col:
+                    outlier_mask = pd.Series(False, index=df.index)
+                    for ent_val, group in df.groupby(entity_col):
+                        g_data = group[col].dropna()
+                        if len(g_data) == 0:
+                            continue
+                        lb, ub = self._compute_outlier_bounds(g_data, request.method, request.threshold, request.lower_percentile, request.upper_percentile)
+                        g_mask = (group[col] < lb) | (group[col] > ub)
+                        outlier_mask.loc[group.index] = g_mask
                 else:
-                    lower_bound = col_data.quantile(request.lower_percentile)
-                    upper_bound = col_data.quantile(request.upper_percentile)
+                    lb, ub = self._compute_outlier_bounds(col_data, request.method, request.threshold, request.lower_percentile, request.upper_percentile)
+                    outlier_mask = (df[col] < lb) | (df[col] > ub)
 
-                outlier_mask = (df[col] < lower_bound) | (df[col] > upper_bound)
-                rows_affected += int(outlier_mask.sum())
+                n_outliers = int(outlier_mask.sum())
+                total_affected += n_outliers
 
                 if request.action == OutlierAction.REMOVE:
                     df = df[~outlier_mask]
                 elif request.action == OutlierAction.CAP:
-                    df.loc[df[col] < lower_bound, col] = lower_bound
-                    df.loc[df[col] > upper_bound, col] = upper_bound
+                    if entity_col:
+                        for _, group in df.groupby(entity_col):
+                            g_data = group[col].dropna()
+                            if len(g_data) == 0:
+                                continue
+                            g_lb, g_ub = self._compute_outlier_bounds(g_data, request.method, request.threshold, request.lower_percentile, request.upper_percentile)
+                            df.loc[(df.index.isin(group.index)) & (df[col] < g_lb), col] = g_lb
+                            df.loc[(df.index.isin(group.index)) & (df[col] > g_ub), col] = g_ub
+                    else:
+                        df.loc[df[col] < lb, col] = lb
+                        df.loc[df[col] > ub, col] = ub
+                elif request.action == OutlierAction.WINSORIZE:
+                    # Cap at 5th/95th percentile of non-outlier values per entity
+                    if entity_col:
+                        for _, group in df.groupby(entity_col):
+                            g_non_outlier = group.loc[~outlier_mask.loc[group.index], col].dropna()
+                            if len(g_non_outlier) == 0:
+                                continue
+                            p05 = g_non_outlier.quantile(0.05)
+                            p95 = g_non_outlier.quantile(0.95)
+                            g_outlier_mask = outlier_mask.loc[group.index]
+                            df.loc[(df.index.isin(group.index)) & g_outlier_mask & (df[col] < p05), col] = p05
+                            df.loc[(df.index.isin(group.index)) & g_outlier_mask & (df[col] > p95), col] = p95
+                    else:
+                        non_outlier_data = df.loc[~outlier_mask, col].dropna()
+                        if len(non_outlier_data) > 0:
+                            p05 = non_outlier_data.quantile(0.05)
+                            p95 = non_outlier_data.quantile(0.95)
+                            df.loc[outlier_mask & (df[col] < p05), col] = p05
+                            df.loc[outlier_mask & (df[col] > p95), col] = p95
                 elif request.action == OutlierAction.REPLACE_MEAN:
-                    df.loc[outlier_mask, col] = col_data.mean()
+                    # Replace with mean of NON-outlier values per entity
+                    if entity_col:
+                        for _, group in df.groupby(entity_col):
+                            g_non_outlier_mean = group.loc[~outlier_mask.loc[group.index], col].mean()
+                            g_outlier_idx = group.index[outlier_mask.loc[group.index]]
+                            df.loc[g_outlier_idx, col] = g_non_outlier_mean
+                    else:
+                        non_outlier_mean = df.loc[~outlier_mask, col].mean()
+                        df.loc[outlier_mask, col] = non_outlier_mean
                 elif request.action == OutlierAction.REPLACE_MEDIAN:
-                    df.loc[outlier_mask, col] = col_data.median()
+                    # Replace with median of NON-outlier values per entity
+                    if entity_col:
+                        for _, group in df.groupby(entity_col):
+                            g_non_outlier_median = group.loc[~outlier_mask.loc[group.index], col].median()
+                            g_outlier_idx = group.index[outlier_mask.loc[group.index]]
+                            df.loc[g_outlier_idx, col] = g_non_outlier_median
+                    else:
+                        non_outlier_median = df.loc[~outlier_mask, col].median()
+                        df.loc[outlier_mask, col] = non_outlier_median
                 # FLAG_ONLY does nothing to the data
 
             rows_after = len(df)
@@ -577,7 +748,7 @@ class PreprocessingService:
                 message=f"Outliers handled using {request.method.value} + {request.action.value}",
                 rows_before=rows_before,
                 rows_after=rows_after,
-                rows_affected=rows_affected,
+                rows_affected=total_affected,
                 preview_data=df.head(10).to_dict(orient='records')
             )
         except Exception as e:
@@ -730,6 +901,224 @@ class PreprocessingService:
             )
         except Exception as e:
             logger.error(f"Error replacing values: {e}")
+            return PreprocessingResultResponse(
+                success=False, message=str(e),
+                rows_before=rows_before, rows_after=rows_before, rows_affected=0
+            )
+
+    # ============================================
+    # Conditional Value Replacement (time-series)
+    # ============================================
+
+    def _build_condition_mask(self, series: pd.Series, request: ConditionalReplacementRequest) -> pd.Series:
+        """Build boolean mask identifying values that match the condition"""
+        if request.condition == "less_than":
+            return series < request.threshold1
+        elif request.condition == "greater_than":
+            return series > request.threshold1
+        elif request.condition == "equal_to":
+            return series == request.threshold1
+        elif request.condition == "between":
+            t2 = request.threshold2 if request.threshold2 is not None else request.threshold1
+            lo, hi = min(request.threshold1, t2), max(request.threshold1, t2)
+            return (series >= lo) & (series <= hi)
+        return pd.Series(False, index=series.index)
+
+    def _describe_condition(self, request: ConditionalReplacementRequest) -> str:
+        if request.condition == "less_than":
+            return f"Values less than {request.threshold1}"
+        elif request.condition == "greater_than":
+            return f"Values greater than {request.threshold1}"
+        elif request.condition == "equal_to":
+            return f"Values equal to {request.threshold1}"
+        elif request.condition == "between":
+            t2 = request.threshold2 if request.threshold2 is not None else request.threshold1
+            lo, hi = min(request.threshold1, t2), max(request.threshold1, t2)
+            return f"Values between {lo} and {hi}"
+        return request.condition
+
+    def _describe_replacement(self, request: ConditionalReplacementRequest) -> str:
+        if request.replacement_method == "specific_value":
+            return f"with {request.replacement_value}"
+        elif request.replacement_method == "weekday_mean":
+            return "with mean of same weekday"
+        elif request.replacement_method == "weekday_median":
+            return "with median of same weekday"
+        return request.replacement_method
+
+    async def preview_conditional_replacement(
+        self,
+        dataset_id: str,
+        request: ConditionalReplacementRequest,
+        entity_id: Optional[str] = None,
+        entity_column: Optional[str] = None
+    ) -> ConditionalReplacementPreview:
+        """Preview how many rows will be affected and weekday breakdown"""
+        if entity_id:
+            df = await self.get_entity_data(dataset_id, entity_id, entity_column)
+        else:
+            df = await self.get_dataset_dataframe(dataset_id)
+
+        if df is None or request.column not in df.columns:
+            return ConditionalReplacementPreview(
+                affected_count=0,
+                condition_text=self._describe_condition(request),
+                replacement_text=self._describe_replacement(request),
+                warnings=["Dataset or column not found"]
+            )
+
+        if not pd.api.types.is_numeric_dtype(df[request.column]):
+            return ConditionalReplacementPreview(
+                affected_count=0,
+                condition_text=self._describe_condition(request),
+                replacement_text=self._describe_replacement(request),
+                warnings=[f"Column '{request.column}' is not numeric"]
+            )
+
+        mask = self._build_condition_mask(df[request.column], request)
+        affected_count = int(mask.sum())
+
+        weekday_breakdown = None
+        warnings: List[str] = []
+
+        date_col = self._detect_date_column(df)
+        if request.replacement_method in ("weekday_mean", "weekday_median"):
+            if not date_col:
+                warnings.append("No date column detected — weekday replacement requires one")
+            else:
+                try:
+                    dates = pd.to_datetime(df[date_col], errors='coerce')
+                    affected_dates = dates[mask]
+                    weekday_names = affected_dates.dt.day_name()
+                    weekday_breakdown = weekday_names.value_counts().to_dict()
+
+                    # Warn if weekday groups have < 3 non-matching observations per entity
+                    entity_col = self._detect_entity_column(df)
+                    non_matching = df[~mask]
+                    if entity_col:
+                        grouped = non_matching.groupby([entity_col, dates.dt.day_name()])[request.column].count()
+                    else:
+                        grouped = non_matching.groupby(dates.dt.day_name())[request.column].count()
+                    if (grouped < 3).any():
+                        warnings.append("Some weekday groups have fewer than 3 observations — replacement may fall back to original values")
+                except Exception as e:
+                    warnings.append(f"Weekday analysis failed: {e}")
+
+        return ConditionalReplacementPreview(
+            affected_count=affected_count,
+            condition_text=self._describe_condition(request),
+            replacement_text=self._describe_replacement(request),
+            weekday_breakdown=weekday_breakdown,
+            warnings=warnings
+        )
+
+    async def replace_values_conditional(
+        self,
+        dataset_id: str,
+        request: ConditionalReplacementRequest,
+        entity_id: Optional[str] = None,
+        entity_column: Optional[str] = None
+    ) -> PreprocessingResultResponse:
+        """Conditional value replacement with optional weekday-based per-entity logic"""
+        if entity_id:
+            df = await self.get_entity_data(dataset_id, entity_id, entity_column)
+        else:
+            df = await self.get_dataset_dataframe(dataset_id)
+
+        if df is None:
+            return PreprocessingResultResponse(
+                success=False, message="Dataset not found",
+                rows_before=0, rows_after=0, rows_affected=0
+            )
+
+        rows_before = len(df)
+
+        if request.column not in df.columns:
+            return PreprocessingResultResponse(
+                success=False, message=f"Column '{request.column}' not found",
+                rows_before=rows_before, rows_after=rows_before, rows_affected=0
+            )
+
+        if not pd.api.types.is_numeric_dtype(df[request.column]):
+            return PreprocessingResultResponse(
+                success=False, message=f"Column '{request.column}' is not numeric",
+                rows_before=rows_before, rows_after=rows_before, rows_affected=0
+            )
+
+        if request.replacement_method == "specific_value" and request.replacement_value is None:
+            return PreprocessingResultResponse(
+                success=False, message="replacement_value is required for specific_value method",
+                rows_before=rows_before, rows_after=rows_before, rows_affected=0
+            )
+
+        try:
+            col = request.column
+            mask = self._build_condition_mask(df[col], request)
+            affected_count = int(mask.sum())
+
+            if affected_count == 0:
+                return PreprocessingResultResponse(
+                    success=True,
+                    message="No values matched the condition",
+                    rows_before=rows_before, rows_after=rows_before, rows_affected=0
+                )
+
+            if request.replacement_method == "specific_value":
+                df.loc[mask, col] = request.replacement_value
+            else:
+                # weekday_mean or weekday_median — requires date column
+                date_col = self._detect_date_column(df)
+                if not date_col:
+                    return PreprocessingResultResponse(
+                        success=False,
+                        message="No date column detected — weekday replacement requires one",
+                        rows_before=rows_before, rows_after=rows_before, rows_affected=0
+                    )
+
+                # Parse dates and get weekday
+                dates = pd.to_datetime(df[date_col], errors='coerce')
+                df['_weekday'] = dates.dt.day_name()
+
+                # Group by entity (if available) + weekday, compute on non-matching values only
+                entity_col = None if entity_id else self._detect_entity_column(df)
+                group_cols = [entity_col, '_weekday'] if entity_col else ['_weekday']
+
+                non_matching = df[~mask]
+                agg_func = 'mean' if request.replacement_method == 'weekday_mean' else 'median'
+                # Compute replacement values per group from non-matching observations
+                replacement_lookup = non_matching.groupby(group_cols)[col].agg(['count', agg_func])
+
+                # Apply replacements only where we have >= 3 non-matching observations
+                def _get_replacement(row):
+                    key = tuple(row[g] for g in group_cols) if len(group_cols) > 1 else row[group_cols[0]]
+                    if key in replacement_lookup.index:
+                        lookup_row = replacement_lookup.loc[key]
+                        if lookup_row['count'] >= 3:
+                            return lookup_row[agg_func]
+                    return row[col]  # fallback: keep original
+
+                # Only apply to rows where mask is True
+                rows_to_replace = df[mask].copy()
+                new_values = rows_to_replace.apply(_get_replacement, axis=1)
+                df.loc[mask, col] = new_values.values
+
+                df = df.drop(columns=['_weekday'])
+
+            await self.save_preprocessed_data(dataset_id, df, entity_id)
+
+            return PreprocessingResultResponse(
+                success=True,
+                message=f"Replaced {affected_count} values in '{col}' {self._describe_replacement(request)}",
+                rows_before=rows_before,
+                rows_after=len(df),
+                rows_affected=affected_count,
+                preview_data=df.head(10).to_dict(orient='records')
+            )
+        except Exception as e:
+            logger.error(f"Error in conditional replacement: {e}")
+            # Clean up temp column if it exists
+            if '_weekday' in df.columns:
+                df = df.drop(columns=['_weekday'])
             return PreprocessingResultResponse(
                 success=False, message=str(e),
                 rows_before=rows_before, rows_after=rows_before, rows_affected=0

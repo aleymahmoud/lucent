@@ -269,6 +269,40 @@ async def logout(
     return {"message": "Successfully logged out"}
 
 
+@router.put("/me/password", response_model=MessageResponse)
+async def change_password(
+    body: dict,
+    current_user: User = Depends(get_current_active_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Change the current user's password. Requires old password for verification."""
+    old_password = body.get("oldPassword", "")
+    new_password = body.get("newPassword", "")
+
+    if not old_password or not new_password:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Both oldPassword and newPassword are required",
+        )
+
+    if len(new_password) < 6:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="New password must be at least 6 characters",
+        )
+
+    if not verify_password(old_password, current_user.password_hash):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Current password is incorrect",
+        )
+
+    current_user.password_hash = get_password_hash(new_password)
+    await db.commit()
+
+    return {"message": "Password changed successfully"}
+
+
 @router.get("/pending-users", response_model=list[UserResponse])
 async def get_pending_users(
     current_user: User = Depends(get_current_active_user),

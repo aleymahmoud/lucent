@@ -24,7 +24,7 @@ export const wizardApi = {
     api.post<WizardTable[]>(`/connectors/${connectorId}/wizard/tables`),
 
   listColumns: (connectorId: string, table: string) =>
-    api.post<WizardColumn[]>(`/connectors/${connectorId}/wizard/columns`, { table }),
+    api.post<WizardColumn[]>(`/connectors/${connectorId}/wizard/columns`, { table }, { timeout: 60000 }),
 
   preview: (
     connectorId: string,

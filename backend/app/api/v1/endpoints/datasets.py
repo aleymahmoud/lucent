@@ -158,9 +158,11 @@ async def list_datasets(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
-    """List all datasets for the current tenant"""
+    """List datasets for the current tenant. Non-admin users only see their own."""
+    from app.models.user import UserRole
     service = DatasetService(db, current_user.tenant_id, current_user.id)
-    datasets, total = await service.list_datasets(skip=skip, limit=limit, search=search)
+    is_admin = current_user.role == UserRole.ADMIN
+    datasets, total = await service.list_datasets(skip=skip, limit=limit, search=search, is_admin=is_admin)
 
     return DatasetListResponse(
         datasets=[DatasetResponse.model_validate(d) for d in datasets],

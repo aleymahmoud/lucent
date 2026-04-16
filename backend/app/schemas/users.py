@@ -26,6 +26,17 @@ class TenantUserUpdate(BaseModel):
     is_approved: Optional[bool] = None
 
 
+class ResetPasswordRequest(BaseModel):
+    """Reset a user's password. If password is omitted, a random one is generated."""
+    password: Optional[str] = Field(None, min_length=8, max_length=100)
+
+
+class ResetPasswordResponse(BaseModel):
+    """Response after password reset"""
+    message: str
+    generated_password: Optional[str] = None
+
+
 class GroupMembershipInfo(BaseModel):
     """Brief group info for user response"""
     id: str

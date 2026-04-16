@@ -15,6 +15,7 @@ from app.services.preprocessing_service import PreprocessingService
 from app.schemas.preprocessing import (
     MissingValuesRequest, DuplicatesRequest, OutlierRequest,
     TimeAggregationRequest, ValueReplacementRequest,
+    ConditionalReplacementRequest, ConditionalReplacementPreview,
     EntityListResponse, EntityStatsResponse,
     PreprocessingResultResponse, MissingValuesResponse,
     OutliersResponse, DuplicatesResponse, PreprocessedDataResponse,
@@ -328,6 +329,48 @@ async def replace_values(
     validate_uuid(dataset_id, "dataset_id")
     service = PreprocessingService(current_user.tenant_id, current_user.id)
     result = await service.replace_values(
+        dataset_id, request, entity_id, entity_column
+    )
+
+    if not result.success:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=result.message
+        )
+
+    return result
+
+
+@router.post("/{dataset_id}/replace-conditional/preview", response_model=ConditionalReplacementPreview)
+async def preview_conditional_replacement(
+    dataset_id: str,
+    request: ConditionalReplacementRequest,
+    entity_id: Optional[str] = Query(None),
+    entity_column: Optional[str] = Query(None),
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """Preview affected rows for a conditional replacement"""
+    validate_uuid(dataset_id, "dataset_id")
+    service = PreprocessingService(current_user.tenant_id, current_user.id)
+    return await service.preview_conditional_replacement(
+        dataset_id, request, entity_id, entity_column
+    )
+
+
+@router.post("/{dataset_id}/replace-conditional", response_model=PreprocessingResultResponse)
+async def replace_values_conditional(
+    dataset_id: str,
+    request: ConditionalReplacementRequest,
+    entity_id: Optional[str] = Query(None),
+    entity_column: Optional[str] = Query(None),
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """Conditional value replacement for time-series (supports weekday mean/median)"""
+    validate_uuid(dataset_id, "dataset_id")
+    service = PreprocessingService(current_user.tenant_id, current_user.id)
+    result = await service.replace_values_conditional(
         dataset_id, request, entity_id, entity_column
     )
 

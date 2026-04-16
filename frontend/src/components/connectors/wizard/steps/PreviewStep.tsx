@@ -86,6 +86,7 @@ export function PreviewStep({
     entity_id: columnMap.entity_id,
     volume: columnMap.volume,
     ...(columnMap.entity_name ? { entity_name: columnMap.entity_name } : {}),
+    ...(columnMap.rls_column ? { rls_column: columnMap.rls_column } : {}),
   };
 
   const { mutate: loadPreview, isPending } = useMutation({
@@ -159,7 +160,7 @@ export function PreviewStep({
         <p className="text-sm text-muted-foreground mt-0.5">
           Showing up to 100 rows from{' '}
           <span className="font-mono text-foreground">
-            {table.schema_name}.{table.name}
+            {table.name}
           </span>
         </p>
       </div>

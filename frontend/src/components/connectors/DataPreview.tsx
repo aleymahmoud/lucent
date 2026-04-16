@@ -87,7 +87,7 @@ export function DataPreview({
         table: resource ?? undefined,
         limit: pageSize,
       }),
-    enabled: !!connectorId,
+    enabled: !!connectorId && !!resource,
   });
 
   const columns = data?.columns ?? [];
@@ -148,7 +148,7 @@ export function DataPreview({
               size="icon"
               className="h-8 w-8"
               onClick={() => refetch()}
-              disabled={isFetching}
+              disabled={isFetching || !resource}
               aria-label="Refresh data preview"
             >
               <RefreshCw

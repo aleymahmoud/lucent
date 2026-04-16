@@ -58,6 +58,9 @@ import {
   Filter,
   UserPlus,
   Clock,
+  KeyRound,
+  Copy,
+  Loader2,
 } from "lucide-react";
 
 export default function TenantUsersPage() {
@@ -83,8 +86,14 @@ export default function TenantUsersPage() {
   const [isCreateOpen, setIsCreateOpen] = useState(false);
   const [isEditOpen, setIsEditOpen] = useState(false);
   const [isDeleteOpen, setIsDeleteOpen] = useState(false);
+  const [isResetPwOpen, setIsResetPwOpen] = useState(false);
   const [selectedUser, setSelectedUser] = useState<TenantUserResponse | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
+
+  // Reset password state
+  const [resetMode, setResetMode] = useState<"random" | "custom">("random");
+  const [customPassword, setCustomPassword] = useState("");
+  const [generatedPassword, setGeneratedPassword] = useState<string | null>(null);
 
   // Form states
   const [formData, setFormData] = useState({
@@ -196,6 +205,33 @@ export default function TenantUsersPage() {
     } catch (err: any) {
       setError(err.response?.data?.detail || "Failed to update user status");
     }
+  };
+
+  const handleResetPassword = async () => {
+    if (!selectedUser) return;
+    try {
+      setIsSubmitting(true);
+      const password = resetMode === "custom" ? customPassword : undefined;
+      const result = await tenantAdminApi.resetPassword(selectedUser.id, password);
+      if (result.generated_password) {
+        setGeneratedPassword(result.generated_password);
+      } else {
+        setIsResetPwOpen(false);
+        setGeneratedPassword(null);
+      }
+    } catch (err: any) {
+      setError(err.response?.data?.detail || "Failed to reset password");
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  const openResetPw = (u: TenantUserResponse) => {
+    setSelectedUser(u);
+    setResetMode("random");
+    setCustomPassword("");
+    setGeneratedPassword(null);
+    setIsResetPwOpen(true);
   };
 
   const openEdit = (u: TenantUserResponse) => {
@@ -474,6 +510,10 @@ export default function TenantUsersPage() {
                             <Pencil className="mr-2 h-4 w-4" />
                             Edit
                           </DropdownMenuItem>
+                          <DropdownMenuItem onClick={() => openResetPw(u)}>
+                            <KeyRound className="mr-2 h-4 w-4" />
+                            Reset Password
+                          </DropdownMenuItem>
                           {!u.is_approved && (
                             <DropdownMenuItem onClick={() => handleApprove(u.id)}>
                               <UserCheck className="mr-2 h-4 w-4" />
@@ -678,6 +718,103 @@ export default function TenantUsersPage() {
               {isSubmitting ? "Deleting..." : "Delete User"}
             </Button>
           </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Reset Password Dialog */}
+      <Dialog open={isResetPwOpen} onOpenChange={(open) => { if (!open) { setIsResetPwOpen(false); setGeneratedPassword(null); } }}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <KeyRound className="h-5 w-5" />
+              Reset Password
+            </DialogTitle>
+            <DialogDescription>
+              Reset password for <span className="font-medium">{selectedUser?.email}</span>
+            </DialogDescription>
+          </DialogHeader>
+
+          {generatedPassword ? (
+            <div className="space-y-4 py-4">
+              <div className="rounded-lg border border-green-200 bg-green-50 p-4 space-y-2">
+                <p className="text-sm font-medium text-green-800">Password reset successfully!</p>
+                <p className="text-xs text-green-700">Copy and share this password securely. It won't be shown again.</p>
+              </div>
+              <div className="flex items-center gap-2">
+                <Input value={generatedPassword} readOnly className="font-mono" />
+                <Button
+                  variant="outline"
+                  size="icon"
+                  onClick={() => {
+                    navigator.clipboard.writeText(generatedPassword);
+                  }}
+                >
+                  <Copy className="h-4 w-4" />
+                </Button>
+              </div>
+              <DialogFooter>
+                <Button onClick={() => { setIsResetPwOpen(false); setGeneratedPassword(null); }}>
+                  Done
+                </Button>
+              </DialogFooter>
+            </div>
+          ) : (
+            <div className="space-y-4 py-4">
+              <div className="space-y-3">
+                <Label>Reset Method</Label>
+                <div className="flex gap-3">
+                  <Button
+                    variant={resetMode === "random" ? "default" : "outline"}
+                    size="sm"
+                    onClick={() => setResetMode("random")}
+                    className="flex-1"
+                  >
+                    Generate Random
+                  </Button>
+                  <Button
+                    variant={resetMode === "custom" ? "default" : "outline"}
+                    size="sm"
+                    onClick={() => setResetMode("custom")}
+                    className="flex-1"
+                  >
+                    Set Custom
+                  </Button>
+                </div>
+              </div>
+
+              {resetMode === "custom" && (
+                <div className="space-y-2">
+                  <Label htmlFor="new-password">New Password</Label>
+                  <Input
+                    id="new-password"
+                    type="text"
+                    placeholder="Min 8 characters"
+                    value={customPassword}
+                    onChange={(e) => setCustomPassword(e.target.value)}
+                  />
+                </div>
+              )}
+
+              <DialogFooter>
+                <Button variant="outline" onClick={() => setIsResetPwOpen(false)}>
+                  Cancel
+                </Button>
+                <Button
+                  onClick={handleResetPassword}
+                  disabled={isSubmitting || (resetMode === "custom" && customPassword.length < 8)}
+                >
+                  {isSubmitting ? (
+                    <>
+                      <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                      Resetting...
+                    </>
+                  ) : (
+                    "Reset Password"
+                  )}
+                </Button>
+              </DialogFooter>
+            </div>
+          )}
         </DialogContent>
       </Dialog>
     </div>

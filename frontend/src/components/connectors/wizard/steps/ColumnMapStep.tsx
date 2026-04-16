@@ -133,6 +133,7 @@ export function ColumnMapStep({
     initialMap?.entity_name ?? ''
   );
   const [volumeCol, setVolumeCol] = useState(initialMap?.volume ?? '');
+  const [rlsCol, setRlsCol] = useState(initialMap?.rls_column ?? '');
 
   const { mutate: loadColumns, isPending } = useMutation({
     mutationFn: () => wizardApi.listColumns(connectorId, table.name),
@@ -146,6 +147,8 @@ export function ColumnMapStep({
       toast.error('Could not load columns', { description: message });
       setHasLoaded(true);
     },
+    retry: 2,
+    retryDelay: 1000,
   });
 
   useEffect(() => {
@@ -153,7 +156,7 @@ export function ColumnMapStep({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [table.name]);
 
-  const isValid = Boolean(dateCol && entityIdCol && volumeCol);
+  const isValid = Boolean(dateCol && entityIdCol && volumeCol && rlsCol);
 
   function handleNext() {
     if (!isValid) return;
@@ -164,6 +167,7 @@ export function ColumnMapStep({
         ? { entity_name: entityNameCol }
         : {}),
       volume: volumeCol,
+      rls_column: rlsCol,
     });
   }
 
@@ -197,7 +201,7 @@ export function ColumnMapStep({
         <h3 className="text-base font-semibold">Map Columns</h3>
         <p className="text-sm text-muted-foreground mt-0.5">
           Map columns from{' '}
-          <span className="font-mono text-foreground">{table.schema_name}.{table.name}</span>{' '}
+          <span className="font-mono text-foreground">{table.name}</span>{' '}
           to their semantic roles.
         </p>
       </div>
@@ -231,12 +235,19 @@ export function ColumnMapStep({
           columns={columns}
           onChange={setVolumeCol}
         />
+        <ColumnSelectField
+          label="RLS Column (Store / Location)"
+          value={rlsCol}
+          required
+          columns={columns}
+          onChange={setRlsCol}
+        />
       </div>
 
       {!isValid && (
         <p className="text-xs text-destructive flex items-center gap-1.5">
           <AlertCircle className="h-3.5 w-3.5" />
-          Date, Entity ID, and Volume columns are required.
+          Date, Entity ID, Volume, and RLS Column are required.
         </p>
       )}
 

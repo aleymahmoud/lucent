@@ -19,7 +19,7 @@ import { api } from "@/lib/api/client";
 import { toast } from "sonner";
 
 type OutlierMethod = "iqr" | "zscore" | "percentile";
-type OutlierAction = "remove" | "cap" | "replace_mean" | "replace_median" | "flag";
+type OutlierAction = "remove" | "cap" | "winsorize" | "replace_mean" | "replace_median" | "flag_only";
 
 interface ColumnOutlierInfo {
   column: string;
@@ -39,17 +39,18 @@ interface OutlierHandlerProps {
 }
 
 const methodOptions: { value: OutlierMethod; label: string; description: string; defaultThreshold: number }[] = [
-  { value: "iqr", label: "IQR Method", description: "Interquartile Range (Q1 - 1.5*IQR to Q3 + 1.5*IQR)", defaultThreshold: 1.5 },
+  { value: "iqr", label: "IQR Method", description: "Interquartile Range (Q1 - k*IQR to Q3 + k*IQR)", defaultThreshold: 3 },
   { value: "zscore", label: "Z-Score", description: "Standard deviations from mean", defaultThreshold: 3 },
   { value: "percentile", label: "Percentile", description: "Values outside percentile bounds", defaultThreshold: 95 },
 ];
 
 const actionOptions: { value: OutlierAction; label: string; description: string }[] = [
-  { value: "remove", label: "Remove Rows", description: "Delete rows containing outliers" },
-  { value: "cap", label: "Cap Values", description: "Replace outliers with boundary values" },
-  { value: "replace_mean", label: "Replace with Mean", description: "Replace outliers with column mean" },
-  { value: "replace_median", label: "Replace with Median", description: "Replace outliers with column median" },
-  { value: "flag", label: "Flag Only", description: "Add a column marking outliers (no data change)" },
+  { value: "flag_only", label: "Keep Outliers", description: "Detect only — no changes to data" },
+  { value: "remove", label: "Remove Outliers", description: "Delete rows containing outliers" },
+  { value: "replace_mean", label: "Replace with Mean", description: "Replace outliers with mean of non-outlier values" },
+  { value: "replace_median", label: "Replace with Median", description: "Replace outliers with median of non-outlier values" },
+  { value: "winsorize", label: "Winsorize", description: "Cap at 5th/95th percentile of non-outlier values" },
+  { value: "cap", label: "Cap at Bounds", description: "Replace outliers with detection boundary values" },
 ];
 
 export function OutlierHandler({
@@ -67,8 +68,8 @@ export function OutlierHandler({
   const [detecting, setDetecting] = useState(false);
   const [processing, setProcessing] = useState(false);
   const [selectedMethod, setSelectedMethod] = useState<OutlierMethod>("iqr");
-  const [threshold, setThreshold] = useState<number>(1.5);
-  const [selectedAction, setSelectedAction] = useState<OutlierAction>("cap");
+  const [threshold, setThreshold] = useState<number>(3);
+  const [selectedAction, setSelectedAction] = useState<OutlierAction>("flag_only");
   const [selectedColumns, setSelectedColumns] = useState<string[]>([]);
   const [error, setError] = useState<string | null>(null);
 
@@ -132,7 +133,13 @@ export function OutlierHandler({
       if (entityId) params.append("entity_id", entityId);
       if (entityColumn) params.append("entity_column", entityColumn);
 
-      await api.post(
+      const result = await api.post<{
+        success: boolean;
+        message: string;
+        rows_before: number;
+        rows_after: number;
+        rows_affected: number;
+      }>(
         `/preprocessing/${datasetId}/outliers${params.toString() ? `?${params}` : ""}`,
         {
           method: selectedMethod,
@@ -142,7 +149,8 @@ export function OutlierHandler({
         }
       );
 
-      toast.success("Outliers handled successfully");
+      const actionLabel = actionOptions.find((a) => a.value === selectedAction)?.label || selectedAction;
+      toast.success(`${result.rows_affected} outlier${result.rows_affected !== 1 ? "s" : ""} handled — ${actionLabel}`);
       if (onProcessingComplete) {
         onProcessingComplete();
       }

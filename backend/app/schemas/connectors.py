@@ -91,3 +91,32 @@ class ConnectorFetchResponse(BaseModel):
 class ConnectorResourcesResponse(BaseModel):
     """List of available tables / files from a connector"""
     resources: List[str]
+
+
+# ============================================
+# Data Source Schemas
+# ============================================
+
+class DataSourceResponse(BaseModel):
+    """Single data source with connector info and RLS state"""
+    id: str
+    connector_id: str
+    connector_name: str
+    connector_type: str
+    name: str
+    source_table: str
+    column_map: dict
+    entity_count: int
+    is_active: bool
+    created_at: datetime
+    rls_column: Optional[str] = None
+    rls_enabled: bool = False
+
+    class Config:
+        from_attributes = True
+
+
+class DataSourceListResponse(BaseModel):
+    """List of data sources for the current tenant"""
+    data_sources: List[DataSourceResponse]
+    total: int

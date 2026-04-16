@@ -139,7 +139,13 @@ export function MissingValuesHandler({
       if (entityId) params.append("entity_id", entityId);
       if (entityColumn) params.append("entity_column", entityColumn);
 
-      await api.post(
+      const result = await api.post<{
+        success: boolean;
+        message: string;
+        rows_before: number;
+        rows_after: number;
+        rows_affected: number;
+      }>(
         `/preprocessing/${datasetId}/missing${params.toString() ? `?${params}` : ""}`,
         {
           method: selectedMethod,
@@ -147,7 +153,12 @@ export function MissingValuesHandler({
         }
       );
 
-      toast.success("Missing values handled successfully");
+      const methodLabel = methodOptions.find((m) => m.value === selectedMethod)?.label || selectedMethod;
+      if (selectedMethod === "drop") {
+        toast.success(`Dropped ${result.rows_before - result.rows_after} rows with missing values`);
+      } else {
+        toast.success(`${result.rows_affected} missing value${result.rows_affected !== 1 ? "s" : ""} filled using ${methodLabel}`);
+      }
       if (onProcessingComplete) {
         onProcessingComplete();
       }

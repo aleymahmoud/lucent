@@ -173,3 +173,93 @@
 | High | Feature partially broken, data corruption possible, or serious UX failure |
 | Medium | Edge case violation, code quality or duplication issue affecting maintainability |
 | Low | Minor code standard violation, cosmetic or stylistic issue |
+
+### [BUG-016] `DataPreview` refresh button bypasses `enabled` guard when `resource` is null
+- **Severity**: Medium
+- **Location**: `frontend/src/components/connectors/DataPreview.tsx`, lines 146-157
+- **Found in**: Yoki
+- **Description**: The fix in this review correctly adds `&& !!resource` to the `enabled` flag so the automatic query does not fire when no resource is selected. However, the Refresh button at line 150 calls `refetch()` unconditionally. In TanStack Query v5, `refetch()` bypasses the `enabled: false` guard and fires the underlying `queryFn`. When `resource` is null this sends `POST /fetch` with `table: undefined`, which will either error out or return unexpected data from the backend.
+- **Expected**: The Refresh button should be disabled (or hidden) whenever `resource` is null, matching the same condition used on the `enabled` flag.
+- **Fix**: Add `disabled={isFetching || !resource}` to the Refresh Button props (line 151). Optionally hide the entire controls row (`Select` + `Button`) behind a `resource &&` guard.
+
+---
+
+### [BUG-017] `TOP N` / `LIMIT N` in GROUP BY entity extraction does not prevent full table scan
+- **Severity**: Low
+- **Location**: `backend/app/api/v1/endpoints/connector_wizard.py`, lines 748-768
+- **Found in**: Nabil / Omar
+- **Description**: The `TOP 1000` (SQL Server) and `LIMIT 1000` (others) clauses are applied to the GROUP BY result set, not to the rows read from the table. The database engine must still scan the entire table and compute all aggregations before the limit is applied. On a table with hundreds of millions of rows the timeout risk is not eliminated -- only the result set returned to the application is capped. The fix is syntactically and logically correct for its stated secondary purpose (capping the returned entity list to 1000), but the timeout problem on very large tables remains unaddressed.
+- **Expected**: Document the limitation clearly in a code comment. A true timeout-safe approach would require a subquery with a row-level limit before grouping (e.g. `SELECT entity_id, COUNT(*) FROM (SELECT TOP 1000000 entity_id FROM table) sub GROUP BY entity_id`), though this changes semantics. Alternatively, enforce a connection-level query timeout and surface it as a user-friendly error.
+- **Fix**: Add a comment to the SQL block explaining that `TOP N` / `LIMIT N` caps the entity list returned to the caller, not the rows scanned. Escalate to Reem to decide whether a connection timeout or subquery approach is required for very large tenants.
+
+---
+
+---
+
+### [BUG-018] Chained .bfill().ffill() inside groupby().transform() raises on duplicate-index groups
+- **Severity**: High
+- **Location**: `backend/app/services/preprocessing_service.py`, lines 393-395 (LINEAR_INTERPOLATE) and lines 406-408 (SPLINE_INTERPOLATE)
+- **Found in**: Nabil
+- **Description**: g.interpolate().bfill().ffill() inside a transform() lambda returns a Series carrying the group index. When the sort at line 339 produces duplicate timestamp values for the same entity (two rows on the same date), pandas raises ValueError: cannot reindex from a duplicate axis when transform tries to re-align the returned Series. This crashes missing-values handling for any dataset with duplicate timestamps per entity.
+- **Expected**: Interpolation completes even when duplicate timestamps exist within an entity group.
+- **Fix**: Append .values to every interpolation chain inside the lambdas so transform receives a numpy array and skips index alignment: g.interpolate(method="linear").bfill().ffill().values. Apply the same fix to both return paths in _spline_or_fallback.
+
+---
+
+### [BUG-019] missing_before over-counts nulls for numeric-only methods, inflating rows_affected
+- **Severity**: Medium
+- **Location**: `backend/app/services/preprocessing_service.py`, lines 326-328
+- **Found in**: Nabil
+- **Description**: missing_before sums nulls across all user-selected columns. FILL_MEAN and FILL_MEDIAN only process numeric columns (guarded by is_numeric_dtype). When the user selects a mixed set of numeric and string columns, null counts from non-numeric columns are included in missing_before but never filled. rows_affected = missing_before - missing_after is therefore overstated and the frontend toast displays an incorrect "X missing values filled" count.
+- **Expected**: rows_affected reflects only the nulls actually filled by the chosen method.
+- **Fix**: For FILL_MEAN and FILL_MEDIAN, scope both missing_before and missing_after to the numeric-only subset: numeric_cols = [c for c in columns if pd.api.types.is_numeric_dtype(df[c])], then sum nulls over numeric_cols only.
+
+---
+
+### [BUG-020] No warning when date column is absent and order-dependent fill is applied
+- **Severity**: Medium
+- **Location**: `backend/app/services/preprocessing_service.py`, lines 337-339
+- **Found in**: Nabil
+- **Description**: When _detect_date_column returns None, the sort is silently skipped and ffill/bfill/interpolation runs on whatever row order exists in Redis. The user receives no indication that fill correctness depends on row order or that chronological ordering could not be verified. Two otherwise identical datasets can produce different fill results depending on their Redis-cached row order.
+- **Expected**: Users are warned when order-dependent methods are applied without a verified chronological sort.
+- **Fix**: When date_col is None and request.method is in order_dependent, append to the response message: " Warning: no date column detected -- fill applied in current row order, which may not be chronological."
+
+---
+
+### [BUG-021] _detect_date_column keyword heuristic matches categorical columns, causing sort by wrong column
+- **Severity**: Medium
+- **Location**: `backend/app/services/preprocessing_service.py`, lines 893-909; called at line 338
+- **Found in**: Nabil
+- **Description**: _detect_date_column returns the first column whose name contains any of ["date", "time", "timestamp", "period", "day", "month", "year"]. A column named product_year (categorical int) or reporting_period_name (string) matches this heuristic. The date-sort at line 339 then sorts by a categorical column instead of a true timestamp. For ffill/bfill/interpolation this produces incorrect fill ordering. The bug is pre-existing but the new date-sort logic in handle_missing_values amplifies it from a cosmetic issue to a data-corrupting one.
+- **Expected**: Only genuine datetime columns are used as sort keys.
+- **Fix**: Escalate to Nabil to tighten _detect_date_column. A column should only qualify if its pandas dtype is already datetime64, OR its name matches a keyword AND pd.to_datetime(df[col], errors="coerce").notna().mean() > 0.8. The current OR logic (keyword match alone is sufficient) must be replaced with AND.
+
+---
+
+### [BUG-022] DROP toast re-computes rows_affected client-side instead of using the response value
+- **Severity**: Low
+- **Location**: `frontend/src/components/preprocessing/MissingValuesHandler.tsx`, line 158
+- **Found in**: Yoki
+- **Description**: The DROP branch shows result.rows_before - result.rows_after when the backend already returns this exact value as result.rows_affected. If the backend formula changes, the frontend will silently display a stale calculation. The fill-methods branch at line 160 correctly uses result.rows_affected directly.
+- **Expected**: Both toast branches use result.rows_affected.
+- **Fix**: Change line 158 from (result.rows_before - result.rows_after) to result.rows_affected.
+
+---
+
+### [BUG-023] total_rows declared in frontend type but absent from API response -- causes NaN percentage and undefined display
+- **Severity**: High
+- **Location**: `frontend/src/components/preprocessing/MissingValuesHandler.tsx`, lines 64-68, 172-174, 206; `backend/app/services/preprocessing_service.py`, lines 296-304
+- **Found in**: Yoki / Nabil
+- **Description**: The component state type declares total_rows: number and uses it at line 172 (analysis.total_rows * analysis.columns.length) and line 206 (display). The backend analyze_missing_values method returns a dict with keys columns, total_missing, total_cells, overall_percentage -- there is no total_rows key. At runtime analysis.total_rows is undefined, the Total Rows stat box renders the text "undefined", and totalMissingPercentage at line 172 evaluates to NaN, breaking the Progress bar for the overall missing percentage summary.
+- **Expected**: The displayed row count is a valid integer and the overall missing percentage is a valid number.
+- **Fix (Option A -- preferred)**: Add "total_rows": total_rows to the dict returned by analyze_missing_values (service line 299) and add total_rows: int to the MissingValuesResponse Pydantic schema. Option B: Remove total_rows from the frontend useState type, change line 172 to analysis.overall_percentage, and derive the displayed row count as Math.round(analysis.total_cells / Math.max(analysis.columns.length, 1)).
+
+---
+
+### [BUG-024] dtype field declared in frontend ColumnMissingInfo but never returned by backend -- renders empty Badge
+- **Severity**: Medium
+- **Location**: `frontend/src/components/preprocessing/MissingValuesHandler.tsx`, line 36 (interface), line 263 (usage); `backend/app/schemas/preprocessing.py`, lines 151-156
+- **Found in**: Yoki / Nabil
+- **Description**: The ColumnMissingInfo TypeScript interface declares dtype: string. The MissingValuesAnalysis Pydantic schema and the analyze_missing_values service method do not include a dtype field. At runtime col.dtype is undefined and the Badge element at line 263 renders empty, providing no visual cue about column data type -- information the user needs to select an appropriate fill method (e.g. mean/median are invalid for string columns).
+- **Expected**: Column dtype (e.g. float64, object, int64) is displayed correctly in the column selection list.
+- **Fix**: In the analyze_missing_values service loop, add "dtype": str(df[col].dtype) to each column entry. Add dtype: str to the MissingValuesAnalysis Pydantic model. This is a non-breaking additive change that does not affect existing callers.

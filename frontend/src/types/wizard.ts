@@ -53,6 +53,7 @@ export interface WizardColumnMap {
   entity_id: string;
   entity_name?: string;
   volume: string;
+  rls_column?: string;
 }
 
 // Accumulated wizard state passed between steps

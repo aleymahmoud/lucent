@@ -17,7 +17,11 @@ from app.schemas.users import (
     TenantUserListResponse,
     TenantStats,
     GroupMembershipInfo,
+    ResetPasswordRequest,
+    ResetPasswordResponse,
 )
+import secrets
+import string
 
 router = APIRouter()
 
@@ -358,6 +362,46 @@ async def delete_tenant_user(
 
     await db.delete(user)
     await db.commit()
+
+
+# ============================================
+# Password Reset
+# ============================================
+
+@router.post("/{user_id}/reset-password", response_model=ResetPasswordResponse)
+async def reset_user_password(
+    user_id: str,
+    body: ResetPasswordRequest,
+    current_user: User = Depends(get_current_tenant_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """Reset a user's password. If no password provided, generates a random one."""
+    tenant_id = current_user.tenant_id
+
+    user = await db.scalar(
+        select(User).where(User.id == user_id, User.tenant_id == tenant_id)
+    )
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="User not found",
+        )
+
+    generated = None
+    if body.password:
+        new_password = body.password
+    else:
+        alphabet = string.ascii_letters + string.digits + "!@#$%"
+        new_password = "".join(secrets.choice(alphabet) for _ in range(14))
+        generated = new_password
+
+    user.password_hash = get_password_hash(new_password)
+    await db.commit()
+
+    return ResetPasswordResponse(
+        message=f"Password reset successfully for {user.email}",
+        generated_password=generated,
+    )
 
 
 # ============================================

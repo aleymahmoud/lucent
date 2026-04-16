@@ -54,6 +54,15 @@ apiClient.interceptors.response.use(
     if (error.response) {
       const { status, data } = error.response;
 
+      // Extract error message from FastAPI response (supports both
+      // {message: "..."} and {detail: {message: "..."}} shapes)
+      const raw = data as Record<string, any>;
+      const detail = raw?.detail;
+      const errorMsg =
+        raw?.message ||
+        (typeof detail === 'string' ? detail : detail?.message) ||
+        'Unknown error';
+
       switch (status) {
         case 401:
           // Unauthorized - redirect to appropriate login
@@ -109,19 +118,16 @@ apiClient.interceptors.response.use(
           }
           break;
         case 403:
-          // Forbidden - no permission
-          console.error('Permission denied:', data.message);
+          console.error('Permission denied:', errorMsg);
           break;
         case 429:
-          // Rate limit exceeded
-          console.error('Rate limit exceeded:', data.message);
+          console.error('Rate limit exceeded:', errorMsg);
           break;
         case 500:
-          // Server error
-          console.error('Server error:', data.message);
+          console.error('Server error:', errorMsg);
           break;
         default:
-          console.error('API error:', data.message);
+          console.error('API error:', errorMsg);
       }
     } else if (error.request) {
       // Request made but no response

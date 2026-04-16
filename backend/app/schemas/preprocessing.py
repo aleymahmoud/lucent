@@ -24,12 +24,12 @@ class MissingValueMethod(str, Enum):
 
 
 class DuplicateMethod(str, Enum):
-    DROP_FIRST = "drop_first"
-    DROP_LAST = "drop_last"
-    DROP_ALL = "drop_all"
+    KEEP_ALL = "keep_all"
     KEEP_FIRST = "keep_first"
     KEEP_LAST = "keep_last"
-    AVERAGE = "average"
+    DROP_ALL = "drop_all"
+    AGGREGATE_SUM = "aggregate_sum"
+    AGGREGATE_MEAN = "aggregate_mean"
 
 
 class OutlierMethod(str, Enum):
@@ -41,6 +41,7 @@ class OutlierMethod(str, Enum):
 class OutlierAction(str, Enum):
     REMOVE = "remove"
     CAP = "cap"
+    WINSORIZE = "winsorize"
     REPLACE_MEAN = "replace_mean"
     REPLACE_MEDIAN = "replace_median"
     FLAG_ONLY = "flag_only"
@@ -81,9 +82,9 @@ class DuplicatesRequest(BaseModel):
 
 class OutlierRequest(BaseModel):
     method: OutlierMethod = OutlierMethod.IQR
-    action: OutlierAction = OutlierAction.CAP
+    action: OutlierAction = OutlierAction.FLAG_ONLY
     columns: Optional[List[str]] = None  # None means all numeric columns
-    threshold: float = 1.5  # IQR multiplier or Z-score threshold
+    threshold: float = 3.0  # IQR multiplier or Z-score threshold
     lower_percentile: float = 0.01  # For percentile method
     upper_percentile: float = 0.99
 
@@ -93,6 +94,28 @@ class ValueReplacementRequest(BaseModel):
     old_value: Any
     new_value: Any
     match_type: Literal["exact", "contains", "regex"] = "exact"
+
+
+class ConditionalReplacementRequest(BaseModel):
+    """Conditional value replacement for time-series cleaning (from old R app).
+
+    Replaces values in `column` that match a numeric condition with either
+    a specific value or the mean/median of same-weekday values per-entity.
+    """
+    column: str
+    condition: Literal["less_than", "greater_than", "equal_to", "between"]
+    threshold1: float
+    threshold2: Optional[float] = None  # Required for 'between'
+    replacement_method: Literal["specific_value", "weekday_mean", "weekday_median"]
+    replacement_value: Optional[float] = None  # Required for 'specific_value'
+
+
+class ConditionalReplacementPreview(BaseModel):
+    affected_count: int
+    condition_text: str
+    replacement_text: str
+    weekday_breakdown: Optional[Dict[str, int]] = None
+    warnings: List[str] = []
 
 
 class TimeAggregationRequest(BaseModel):

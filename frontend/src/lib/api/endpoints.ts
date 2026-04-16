@@ -342,7 +342,7 @@ export const userApi = {
     api.put<User>('/users/me', data),
 
   changePassword: (oldPassword: string, newPassword: string) =>
-    api.put('/users/me/password', { oldPassword, newPassword }),
+    api.put('/auth/me/password', { oldPassword, newPassword }),
 
   // Admin only
   list: () =>
@@ -389,6 +389,21 @@ export const connectorApi = {
 
   getColumns: (id: string) =>
     api.get<{ columns: string[] }>(`/connectors/${id}/columns`),
+};
+
+// ============================================
+// User Data Sources API (for all authenticated users)
+// ============================================
+
+export const userDataSourceApi = {
+  list: () =>
+    api.get<DataSourceItem[]>('/data-sources'),
+
+  getEntities: (dataSourceId: string) =>
+    api.get<{ id: string; name: string | null; count: number }[]>(`/data-sources/${dataSourceId}/entities`),
+
+  importData: (dataSourceId: string, data: { date_range_start?: string; date_range_end?: string }) =>
+    api.post<{ dataset_id: string; data_source_id: string; row_count: number; entity_count: number; status: string }>(`/data-sources/${dataSourceId}/import`, data),
 };
 
 // ============================================
@@ -541,6 +556,26 @@ interface ConnectorRLSResponse {
   updated_at: string;
 }
 
+interface DataSourceItem {
+  id: string;
+  connector_id: string;
+  connector_name: string;
+  connector_type: string;
+  name: string;
+  source_table: string;
+  column_map: Record<string, string>;
+  entity_count: number;
+  is_active: boolean;
+  created_at: string;
+  rls_column: string | null;
+  rls_enabled: boolean;
+}
+
+interface DataSourceListResponse {
+  data_sources: DataSourceItem[];
+  total: number;
+}
+
 interface ConnectorWithRLS {
   id: string;
   name: string;
@@ -588,6 +623,9 @@ export const tenantAdminApi = {
   deleteUser: (userId: string) =>
     api.delete(`/users/${userId}`),
 
+  resetPassword: (userId: string, password?: string) =>
+    api.post<{ message: string; generated_password: string | null }>(`/users/${userId}/reset-password`, { password: password || null }),
+
   approveUser: (userId: string) =>
     api.put<TenantUserResponse>(`/users/${userId}/approve`),
 
@@ -628,6 +666,19 @@ export const tenantAdminApi = {
 
   removeAllGroupMembers: (groupId: string) =>
     api.delete<{ message: string; group_id: string; removed_count: number }>(`/groups/${groupId}/members`),
+
+  // Data Sources (wizard-created)
+  listDataSources: () =>
+    api.get<DataSourceListResponse>('/connectors/data-sources'),
+
+  getDataSourceEntities: (dataSourceId: string) =>
+    api.get<{ id: string; name: string | null; count: number }[]>(`/data-sources/${dataSourceId}/entities`),
+
+  deleteDataSource: (dataSourceId: string) =>
+    api.delete(`/connectors/data-sources/${dataSourceId}`),
+
+  deleteConnector: (connectorId: string) =>
+    api.delete(`/connectors/${connectorId}`),
 
   // Connector RLS Management
   listConnectors: (params?: { skip?: number; limit?: number; search?: string; is_active?: boolean }) => {
@@ -717,5 +768,5 @@ export const brandingApi = {
 // Export types for use in components
 export type { ApiUser, TenantPublicInfo };
 export type { AdminTenant, AdminTenantListResponse, AdminUserResponse, AdminUserListResponse, PlatformStats };
-export type { TenantUserResponse, TenantUserListResponse, TenantStats, GroupResponse, GroupDetailResponse, GroupListResponse, ConnectorRLSResponse, ConnectorWithRLS, ConnectorListResponse };
+export type { TenantUserResponse, TenantUserListResponse, TenantStats, GroupResponse, GroupDetailResponse, GroupListResponse, ConnectorRLSResponse, ConnectorWithRLS, ConnectorListResponse, DataSourceItem, DataSourceListResponse };
 export type { BrandingColors, BrandingSettings, BrandingResponse, BrandingUpdate };

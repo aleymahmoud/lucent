@@ -8,7 +8,7 @@ from sqlalchemy.orm import selectinload
 from typing import Optional
 
 from app.core.deps import get_db, get_current_tenant_admin, get_current_user
-from app.models import User, Connector, ConnectorRLS
+from app.models import User, Connector, ConnectorRLS, ConnectorDataSource
 from app.schemas.connectors import (
     ConnectorRLSCreate,
     ConnectorRLSUpdate,
@@ -20,6 +20,8 @@ from app.schemas.connectors import (
     ConnectorFetchRequest,
     ConnectorFetchResponse,
     ConnectorResourcesResponse,
+    DataSourceResponse,
+    DataSourceListResponse,
 )
 from app.services.connector_service import (
     get_connector_columns_from_db,
@@ -104,6 +106,79 @@ async def list_connectors(
         ))
 
     return ConnectorListResponse(connectors=connector_responses, total=total or 0)
+
+
+# ============================================
+# Data Sources
+# ============================================
+
+@router.get("/data-sources", response_model=DataSourceListResponse)
+async def list_data_sources(
+    current_user: User = Depends(get_current_tenant_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """List all ConnectorDataSource records for the current tenant with connector info and RLS state (Tenant Admin only)"""
+    tenant_id = current_user.tenant_id
+
+    # Load data sources with their connector (and connector's rls_config) eager-loaded
+    result = await db.execute(
+        select(ConnectorDataSource)
+        .options(
+            selectinload(ConnectorDataSource.connector).selectinload(Connector.rls_config)
+        )
+        .where(ConnectorDataSource.tenant_id == tenant_id)
+        .order_by(ConnectorDataSource.created_at.desc())
+    )
+    data_sources = result.scalars().all()
+
+    responses = []
+    for ds in data_sources:
+        connector = ds.connector
+        rls = connector.rls_config if connector else None
+
+        # selected_entity_ids may be None or a list
+        entity_ids = ds.selected_entity_ids or []
+        entity_count = len(entity_ids)
+
+        responses.append(DataSourceResponse(
+            id=ds.id,
+            connector_id=ds.connector_id,
+            connector_name=connector.name if connector else "",
+            connector_type=connector.type.value if connector else "",
+            name=ds.name,
+            source_table=ds.source_table,
+            column_map=ds.column_map or {},
+            entity_count=entity_count,
+            is_active=ds.is_active,
+            created_at=ds.created_at,
+            rls_column=rls.rls_column if rls else None,
+            rls_enabled=rls.is_enabled if rls else False,
+        ))
+
+    return DataSourceListResponse(data_sources=responses, total=len(responses))
+
+
+@router.delete("/data-sources/{data_source_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_data_source(
+    data_source_id: str,
+    current_user: User = Depends(get_current_tenant_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """Delete a data source (Tenant Admin only)"""
+    validate_uuid(data_source_id, "data_source_id")
+    tenant_id = current_user.tenant_id
+
+    data_source = await db.scalar(
+        select(ConnectorDataSource).where(
+            ConnectorDataSource.id == data_source_id,
+            ConnectorDataSource.tenant_id == tenant_id,
+        )
+    )
+    if not data_source:
+        raise HTTPException(status_code=404, detail="Data source not found")
+
+    await db.delete(data_source)
+    await db.commit()
 
 
 @router.get("/{connector_id}", response_model=ConnectorBasicResponse)

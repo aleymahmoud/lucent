@@ -9,6 +9,7 @@ import {
   type GroupResponse,
   type GroupDetailResponse,
   type TenantUserResponse,
+  type DataSourceItem,
 } from "@/lib/api/endpoints";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -38,6 +39,14 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { Checkbox } from "@/components/ui/checkbox";
+import {
   Users,
   Plus,
   Search,
@@ -50,6 +59,8 @@ import {
   UserMinus,
   Shield,
   Eye,
+  Loader2,
+  Database,
 } from "lucide-react";
 
 export default function GroupsPage() {
@@ -84,6 +95,12 @@ export default function GroupsPage() {
   });
   const [rlsInput, setRlsInput] = useState("");
 
+  // Data source + entity selection for RLS
+  const [dataSources, setDataSources] = useState<DataSourceItem[]>([]);
+  const [selectedDsId, setSelectedDsId] = useState<string>("");
+  const [dsEntities, setDsEntities] = useState<string[]>([]);
+  const [isLoadingEntities, setIsLoadingEntities] = useState(false);
+
   // Check if user is admin
   useEffect(() => {
     if (user && user.role !== "admin" ) {
@@ -103,14 +120,16 @@ export default function GroupsPage() {
       const params: any = { limit: 100 };
       if (search) params.search = search;
 
-      const [groupsData, usersData] = await Promise.all([
+      const [groupsData, usersData, dsData] = await Promise.all([
         tenantAdminApi.listGroups(params),
         tenantAdminApi.listUsers({ limit: 100 }),
+        tenantAdminApi.listDataSources(),
       ]);
 
       setGroups(groupsData.groups);
       setTotal(groupsData.total);
       setAllUsers(usersData.users);
+      setDataSources(dsData.data_sources);
     } catch (err: any) {
       setError(err.response?.data?.detail || "Failed to load groups");
     } finally {
@@ -210,6 +229,8 @@ export default function GroupsPage() {
       rls_values: group.rls_values || [],
     });
     setRlsInput("");
+    setSelectedDsId("");
+    setDsEntities([]);
     setIsEditOpen(true);
   };
 
@@ -242,6 +263,40 @@ export default function GroupsPage() {
     });
   };
 
+  const handleSelectDataSource = async (dsId: string) => {
+    setSelectedDsId(dsId);
+    if (!dsId) {
+      setDsEntities([]);
+      return;
+    }
+    try {
+      setIsLoadingEntities(true);
+      const entities = await tenantAdminApi.getDataSourceEntities(dsId);
+      setDsEntities(entities.map((e: any) => e.id));
+    } catch {
+      setDsEntities([]);
+    } finally {
+      setIsLoadingEntities(false);
+    }
+  };
+
+  const toggleEntitySelection = (entityId: string) => {
+    const current = formData.rls_values;
+    if (current.includes(entityId)) {
+      setFormData({ ...formData, rls_values: current.filter((v) => v !== entityId) });
+    } else {
+      setFormData({ ...formData, rls_values: [...current, entityId] });
+    }
+  };
+
+  const toggleAllEntities = () => {
+    if (formData.rls_values.length === dsEntities.length) {
+      setFormData({ ...formData, rls_values: [] });
+    } else {
+      setFormData({ ...formData, rls_values: [...dsEntities] });
+    }
+  };
+
   // Get users not in the current group
   const availableUsers = groupDetail
     ? allUsers.filter(
@@ -268,6 +323,8 @@ export default function GroupsPage() {
           onClick={() => {
             setFormData({ name: "", description: "", rls_values: [] });
             setRlsInput("");
+            setSelectedDsId("");
+            setDsEntities([]);
             setIsCreateOpen(true);
           }}
         >
@@ -456,46 +513,71 @@ export default function GroupsPage() {
                 }
               />
             </div>
-            <div className="space-y-2">
-              <Label>RLS Values</Label>
-              <p className="text-xs text-muted-foreground mb-2">
-                Values that determine which data rows this group can access
+            <div className="space-y-3">
+              <Label>Assign Entities (RLS)</Label>
+              <p className="text-xs text-muted-foreground">
+                Select a data source and choose which entities this group can access
               </p>
-              <div className="flex gap-2">
-                <Input
-                  placeholder="e.g., Store A, Region North"
-                  value={rlsInput}
-                  onChange={(e) => setRlsInput(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter") {
-                      e.preventDefault();
-                      addRlsValue();
-                    }
-                  }}
-                />
-                <Button type="button" variant="outline" onClick={addRlsValue}>
-                  Add
-                </Button>
-              </div>
-              {formData.rls_values.length > 0 && (
-                <div className="flex flex-wrap gap-2 mt-2">
-                  {formData.rls_values.map((value) => (
-                    <span
-                      key={value}
-                      className="inline-flex items-center gap-1 rounded-full bg-purple-100 px-3 py-1 text-sm font-medium text-purple-700"
-                    >
-                      <Shield className="h-3 w-3" />
-                      {value}
-                      <button
-                        type="button"
-                        onClick={() => removeRlsValue(value)}
-                        className="ml-1 text-purple-500 hover:text-purple-700"
-                      >
-                        <X className="h-3 w-3" />
-                      </button>
-                    </span>
-                  ))}
-                </div>
+
+              {dataSources.length > 0 ? (
+                <>
+                  <Select value={selectedDsId} onValueChange={handleSelectDataSource}>
+                    <SelectTrigger>
+                      <SelectValue placeholder="Select a data source" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {dataSources.map((ds) => (
+                        <SelectItem key={ds.id} value={ds.id}>
+                          <div className="flex items-center gap-2">
+                            <Database className="h-3.5 w-3.5 text-muted-foreground" />
+                            <span>{ds.name}</span>
+                            <span className="text-xs text-muted-foreground">
+                              ({ds.entity_count} entities)
+                            </span>
+                          </div>
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+
+                  {isLoadingEntities && (
+                    <div className="flex items-center gap-2 py-4 justify-center text-sm text-muted-foreground">
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                      Loading entities...
+                    </div>
+                  )}
+
+                  {!isLoadingEntities && dsEntities.length > 0 && (
+                    <div className="border rounded-md">
+                      <div className="flex items-center justify-between px-3 py-2 border-b bg-muted/30">
+                        <Button variant="ghost" size="sm" className="h-7 text-xs" onClick={toggleAllEntities}>
+                          {formData.rls_values.length === dsEntities.length ? "Deselect All" : "Select All"}
+                        </Button>
+                        <span className="text-xs text-muted-foreground">
+                          {formData.rls_values.length} / {dsEntities.length} selected
+                        </span>
+                      </div>
+                      <div className="max-h-48 overflow-y-auto p-1">
+                        {dsEntities.map((entityId) => (
+                          <label
+                            key={entityId}
+                            className="flex items-center gap-3 rounded px-3 py-1.5 hover:bg-muted/50 cursor-pointer text-sm"
+                          >
+                            <Checkbox
+                              checked={formData.rls_values.includes(entityId)}
+                              onCheckedChange={() => toggleEntitySelection(entityId)}
+                            />
+                            <span className="font-mono text-xs">{entityId}</span>
+                          </label>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </>
+              ) : (
+                <p className="text-sm text-muted-foreground italic py-2">
+                  No data sources configured yet. Run the Setup Wizard on a connector first.
+                </p>
               )}
             </div>
           </div>
@@ -543,43 +625,86 @@ export default function GroupsPage() {
                 }
               />
             </div>
-            <div className="space-y-2">
-              <Label>RLS Values</Label>
-              <div className="flex gap-2">
-                <Input
-                  placeholder="Add new value"
-                  value={rlsInput}
-                  onChange={(e) => setRlsInput(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter") {
-                      e.preventDefault();
-                      addRlsValue();
-                    }
-                  }}
-                />
-                <Button type="button" variant="outline" onClick={addRlsValue}>
-                  Add
-                </Button>
-              </div>
-              {formData.rls_values.length > 0 && (
-                <div className="flex flex-wrap gap-2 mt-2">
-                  {formData.rls_values.map((value) => (
-                    <span
-                      key={value}
-                      className="inline-flex items-center gap-1 rounded-full bg-purple-100 px-3 py-1 text-sm font-medium text-purple-700"
-                    >
-                      <Shield className="h-3 w-3" />
-                      {value}
-                      <button
-                        type="button"
-                        onClick={() => removeRlsValue(value)}
-                        className="ml-1 text-purple-500 hover:text-purple-700"
-                      >
-                        <X className="h-3 w-3" />
-                      </button>
-                    </span>
-                  ))}
-                </div>
+            <div className="space-y-3">
+              <Label>Assigned Entities (RLS)</Label>
+              <p className="text-xs text-muted-foreground">
+                Select a data source and choose which entities this group can access
+              </p>
+
+              {dataSources.length > 0 ? (
+                <>
+                  <Select value={selectedDsId} onValueChange={handleSelectDataSource}>
+                    <SelectTrigger>
+                      <SelectValue placeholder="Select a data source" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {dataSources.map((ds) => (
+                        <SelectItem key={ds.id} value={ds.id}>
+                          <div className="flex items-center gap-2">
+                            <Database className="h-3.5 w-3.5 text-muted-foreground" />
+                            <span>{ds.name}</span>
+                            <span className="text-xs text-muted-foreground">
+                              ({ds.entity_count} entities)
+                            </span>
+                          </div>
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+
+                  {isLoadingEntities && (
+                    <div className="flex items-center gap-2 py-4 justify-center text-sm text-muted-foreground">
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                      Loading entities...
+                    </div>
+                  )}
+
+                  {!isLoadingEntities && dsEntities.length > 0 && (
+                    <div className="border rounded-md">
+                      <div className="flex items-center justify-between px-3 py-2 border-b bg-muted/30">
+                        <Button variant="ghost" size="sm" className="h-7 text-xs" onClick={toggleAllEntities}>
+                          {formData.rls_values.length === dsEntities.length ? "Deselect All" : "Select All"}
+                        </Button>
+                        <span className="text-xs text-muted-foreground">
+                          {formData.rls_values.length} / {dsEntities.length} selected
+                        </span>
+                      </div>
+                      <div className="max-h-48 overflow-y-auto p-1">
+                        {dsEntities.map((entityId) => (
+                          <label
+                            key={entityId}
+                            className="flex items-center gap-3 rounded px-3 py-1.5 hover:bg-muted/50 cursor-pointer text-sm"
+                          >
+                            <Checkbox
+                              checked={formData.rls_values.includes(entityId)}
+                              onCheckedChange={() => toggleEntitySelection(entityId)}
+                            />
+                            <span className="font-mono text-xs">{entityId}</span>
+                          </label>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Show currently assigned values not in the entity list */}
+                  {!isLoadingEntities && formData.rls_values.length > 0 && dsEntities.length === 0 && !selectedDsId && (
+                    <div className="flex flex-wrap gap-1 mt-1">
+                      {formData.rls_values.map((val) => (
+                        <span key={val} className="inline-flex items-center gap-1 rounded-full bg-purple-100 px-2 py-0.5 text-xs font-medium text-purple-700">
+                          <Shield className="h-3 w-3" />
+                          {val}
+                          <button type="button" onClick={() => removeRlsValue(val)} className="ml-1 text-purple-500 hover:text-purple-700">
+                            <X className="h-3 w-3" />
+                          </button>
+                        </span>
+                      ))}
+                    </div>
+                  )}
+                </>
+              ) : (
+                <p className="text-sm text-muted-foreground italic py-2">
+                  No data sources configured yet. Run the Setup Wizard on a connector first.
+                </p>
               )}
             </div>
           </div>

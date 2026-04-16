@@ -1,10 +1,16 @@
 "use client";
 
+import { useState } from "react";
 import { useParams } from "next/navigation";
 import Link from "next/link";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import { useAuth } from "@/contexts/AuthContext";
-import { Users, UsersRound, Link2, Palette, Settings } from "lucide-react";
+import { userApi } from "@/lib/api/endpoints";
+import { Users, UsersRound, Link2, Palette, Settings, KeyRound, Loader2, CheckCircle2, AlertCircle } from "lucide-react";
+import { toast } from "sonner";
 
 const settingsItems = [
   {
@@ -36,6 +42,100 @@ const settingsItems = [
     adminOnly: true,
   },
 ];
+
+function ChangePasswordForm() {
+  const [oldPassword, setOldPassword] = useState("");
+  const [newPassword, setNewPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const isValid = oldPassword && newPassword.length >= 6 && newPassword === confirmPassword;
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!isValid) return;
+    setError(null);
+    try {
+      setIsSubmitting(true);
+      await userApi.changePassword(oldPassword, newPassword);
+      toast.success("Password changed successfully");
+      setOldPassword("");
+      setNewPassword("");
+      setConfirmPassword("");
+    } catch (err: any) {
+      const msg = err.response?.data?.detail || "Failed to change password";
+      setError(typeof msg === "string" ? msg : msg.message || "Failed to change password");
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2">
+          <KeyRound className="h-5 w-5 text-primary" />
+          Change Password
+        </CardTitle>
+        <CardDescription>Update your account password</CardDescription>
+      </CardHeader>
+      <CardContent>
+        <form onSubmit={handleSubmit} className="space-y-4 max-w-sm">
+          {error && (
+            <div className="flex items-center gap-2 rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-700">
+              <AlertCircle className="h-4 w-4 shrink-0" />
+              {error}
+            </div>
+          )}
+          <div className="space-y-1.5">
+            <Label htmlFor="old-pw">Current Password</Label>
+            <Input
+              id="old-pw"
+              type="password"
+              value={oldPassword}
+              onChange={(e) => setOldPassword(e.target.value)}
+              placeholder="Enter current password"
+            />
+          </div>
+          <div className="space-y-1.5">
+            <Label htmlFor="new-pw">New Password</Label>
+            <Input
+              id="new-pw"
+              type="password"
+              value={newPassword}
+              onChange={(e) => setNewPassword(e.target.value)}
+              placeholder="At least 6 characters"
+            />
+          </div>
+          <div className="space-y-1.5">
+            <Label htmlFor="confirm-pw">Confirm New Password</Label>
+            <Input
+              id="confirm-pw"
+              type="password"
+              value={confirmPassword}
+              onChange={(e) => setConfirmPassword(e.target.value)}
+              placeholder="Repeat new password"
+            />
+            {confirmPassword && newPassword !== confirmPassword && (
+              <p className="text-xs text-destructive">Passwords do not match</p>
+            )}
+          </div>
+          <Button type="submit" disabled={!isValid || isSubmitting}>
+            {isSubmitting ? (
+              <>
+                <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                Changing...
+              </>
+            ) : (
+              "Change Password"
+            )}
+          </Button>
+        </form>
+      </CardContent>
+    </Card>
+  );
+}
 
 export default function SettingsPage() {
   const params = useParams();
@@ -89,6 +189,9 @@ export default function SettingsPage() {
           })}
         </div>
       )}
+
+      {/* Change Password — visible to all users */}
+      <ChangePasswordForm />
     </div>
   );
 }

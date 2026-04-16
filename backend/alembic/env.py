@@ -39,7 +39,10 @@ config = context.config
 
 # Set the database URL from settings
 # Convert async URL to sync URL for Alembic
-database_url = settings.DATABASE_URL.replace("postgresql+asyncpg://", "postgresql://").replace("ssl=require", "sslmode=require")
+database_url = settings.DATABASE_URL.replace("postgresql+asyncpg://", "postgresql://")
+# Handle SSL params for Neon (cloud) vs self-hosted (no SSL)
+if "ssl=require" in database_url:
+    database_url = database_url.replace("ssl=require", "sslmode=require")
 config.set_main_option("sqlalchemy.url", database_url)
 
 # Interpret the config file for Python logging.

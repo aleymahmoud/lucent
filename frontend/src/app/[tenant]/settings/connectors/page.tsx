@@ -6,12 +6,11 @@ import { useTenant } from "@/contexts/TenantContext";
 import { useRouter, useParams } from "next/navigation";
 import {
   tenantAdminApi,
-  type ConnectorWithRLS,
+  type DataSourceItem,
   type GroupResponse,
 } from "@/lib/api/endpoints";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
   Table,
@@ -29,34 +28,24 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
+import { Checkbox } from "@/components/ui/checkbox";
 import {
   Database,
-  Search,
-  MoreHorizontal,
-  Trash2,
-  Check,
-  X,
-  AlertCircle,
   Shield,
-  Eye,
-  Settings,
+  Users,
+  AlertCircle,
+  X,
   Loader2,
+  Check,
+  Settings,
+  Table2,
+  Trash2,
 } from "lucide-react";
+
+// -------------------------------------------------------
+// Connector type labels
+// -------------------------------------------------------
 
 const connectorTypeLabels: Record<string, string> = {
   postgres: "PostgreSQL",
@@ -70,147 +59,153 @@ const connectorTypeLabels: Record<string, string> = {
   api: "REST API",
 };
 
-export default function ConnectorsPage() {
+// -------------------------------------------------------
+// Page
+// -------------------------------------------------------
+
+export default function ConnectorsRlsPage() {
   const { user } = useAuth();
   const { tenant } = useTenant();
   const router = useRouter();
   const params = useParams();
   const tenantSlug = params.tenant as string;
 
-  const [connectors, setConnectors] = useState<ConnectorWithRLS[]>([]);
+  const [dataSources, setDataSources] = useState<DataSourceItem[]>([]);
   const [groups, setGroups] = useState<GroupResponse[]>([]);
-  const [total, setTotal] = useState(0);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [search, setSearch] = useState("");
 
-  const [isRlsConfigOpen, setIsRlsConfigOpen] = useState(false);
-  const [isDeleteRlsOpen, setIsDeleteRlsOpen] = useState(false);
-  const [isDetailOpen, setIsDetailOpen] = useState(false);
-  const [selectedConnector, setSelectedConnector] = useState<ConnectorWithRLS | null>(null);
-  const [isSubmitting, setIsSubmitting] = useState(false);
+  // Entity assignment dialog
+  const [assignDialogOpen, setAssignDialogOpen] = useState(false);
+  const [selectedDs, setSelectedDs] = useState<DataSourceItem | null>(null);
+  const [selectedGroupId, setSelectedGroupId] = useState<string | null>(null);
+  const [entityIds, setEntityIds] = useState<string[]>([]);
+  const [selectedEntities, setSelectedEntities] = useState<Set<string>>(new Set());
+  const [isLoadingEntities, setIsLoadingEntities] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
 
-  const [rlsColumn, setRlsColumn] = useState("");
-  const [rlsEnabled, setRlsEnabled] = useState(true);
-  const [columns, setColumns] = useState<string[]>([]);
-  const [isLoadingColumns, setIsLoadingColumns] = useState(false);
+  // Delete confirmation
+  const [deleteTarget, setDeleteTarget] = useState<{ type: "connector" | "data-source"; id: string; name: string } | null>(null);
+  const [isDeleting, setIsDeleting] = useState(false);
 
   useEffect(() => {
-    if (user && user.role !== "admin" ) {
+    if (user && user.role !== "admin") {
       router.push(`/${tenantSlug}/dashboard`);
     }
   }, [user, router, tenantSlug]);
 
   useEffect(() => {
     loadData();
-  }, [search]);
+  }, []);
 
   const loadData = async () => {
     try {
       setIsLoading(true);
       setError(null);
-
-      const params: any = { limit: 100 };
-      if (search) params.search = search;
-
-      const [connectorsData, groupsData] = await Promise.all([
-        tenantAdminApi.listConnectors(params),
+      const [dsData, groupsData] = await Promise.all([
+        tenantAdminApi.listDataSources(),
         tenantAdminApi.listGroups({ limit: 100 }),
       ]);
-
-      setConnectors(connectorsData.connectors);
-      setTotal(connectorsData.total);
+      setDataSources(dsData.data_sources);
       setGroups(groupsData.groups);
     } catch (err: any) {
-      setError(err.response?.data?.detail || "Failed to load connectors");
+      setError(err.response?.data?.detail || "Failed to load data");
     } finally {
       setIsLoading(false);
     }
   };
 
-  const loadColumns = async (connectorId: string) => {
+  const handleToggleRls = async (ds: DataSourceItem) => {
     try {
-      setIsLoadingColumns(true);
-      const response = await tenantAdminApi.getConnectorColumns(connectorId);
-      setColumns(response.columns);
-    } catch {
-      setColumns([]);
-    } finally {
-      setIsLoadingColumns(false);
-    }
-  };
-
-  const handleConfigureRls = async (connector: ConnectorWithRLS) => {
-    setSelectedConnector(connector);
-    if (connector.rls_config) {
-      setRlsColumn(connector.rls_config.rls_column);
-      setRlsEnabled(connector.rls_config.is_enabled);
-    } else {
-      setRlsColumn("");
-      setRlsEnabled(true);
-    }
-    setIsRlsConfigOpen(true);
-    loadColumns(connector.id);
-  };
-
-  const handleSaveRls = async () => {
-    if (!selectedConnector || !rlsColumn) return;
-    try {
-      setIsSubmitting(true);
-      if (selectedConnector.rls_config) {
-        await tenantAdminApi.updateConnectorRLS(selectedConnector.id, {
-          rls_column: rlsColumn,
-          is_enabled: rlsEnabled,
-        });
-      } else {
-        await tenantAdminApi.createConnectorRLS(selectedConnector.id, {
-          rls_column: rlsColumn,
-          is_enabled: rlsEnabled,
-        });
-      }
-      setIsRlsConfigOpen(false);
-      setSelectedConnector(null);
-      loadData();
-    } catch (err: any) {
-      setError(err.response?.data?.detail || "Failed to save RLS configuration");
-    } finally {
-      setIsSubmitting(false);
-    }
-  };
-
-  const handleToggleRls = async (connector: ConnectorWithRLS) => {
-    if (!connector.rls_config) return;
-    try {
-      await tenantAdminApi.toggleConnectorRLS(connector.id);
+      await tenantAdminApi.toggleConnectorRLS(ds.connector_id);
       loadData();
     } catch (err: any) {
       setError(err.response?.data?.detail || "Failed to toggle RLS");
     }
   };
 
-  const handleDeleteRls = async () => {
-    if (!selectedConnector) return;
+  const openAssignDialog = async (ds: DataSourceItem, groupId: string) => {
+    setSelectedDs(ds);
+    setSelectedGroupId(groupId);
+    setAssignDialogOpen(true);
+    setIsLoadingEntities(true);
+
     try {
-      setIsSubmitting(true);
-      await tenantAdminApi.deleteConnectorRLS(selectedConnector.id);
-      setIsDeleteRlsOpen(false);
-      setSelectedConnector(null);
-      loadData();
-    } catch (err: any) {
-      setError(err.response?.data?.detail || "Failed to delete RLS configuration");
+      // Load entities from the wizard data via the data-sources entities endpoint
+      const res = await tenantAdminApi.getDataSourceEntities(ds.id);
+      const ids: string[] = res.map((e: any) => e.id);
+      setEntityIds(ids);
+
+      // Pre-select entities already assigned to this group
+      const group = groups.find((g) => g.id === groupId);
+      const existing = new Set(group?.rls_values ?? []);
+      setSelectedEntities(existing);
+    } catch {
+      // Fallback: use selected_entity_ids if entities endpoint unavailable
+      setEntityIds([]);
     } finally {
-      setIsSubmitting(false);
+      setIsLoadingEntities(false);
     }
   };
 
-  const openDetail = (connector: ConnectorWithRLS) => {
-    setSelectedConnector(connector);
-    setIsDetailOpen(true);
+  const handleSaveEntities = async () => {
+    if (!selectedGroupId) return;
+    try {
+      setIsSaving(true);
+      await tenantAdminApi.updateGroup(selectedGroupId, {
+        rls_values: Array.from(selectedEntities),
+      });
+      setAssignDialogOpen(false);
+      loadData();
+    } catch (err: any) {
+      setError(err.response?.data?.detail || "Failed to save entity assignments");
+    } finally {
+      setIsSaving(false);
+    }
   };
 
+  const toggleEntity = (entityId: string) => {
+    setSelectedEntities((prev) => {
+      const next = new Set(prev);
+      if (next.has(entityId)) {
+        next.delete(entityId);
+      } else {
+        next.add(entityId);
+      }
+      return next;
+    });
+  };
+
+  const toggleAll = () => {
+    if (selectedEntities.size === entityIds.length) {
+      setSelectedEntities(new Set());
+    } else {
+      setSelectedEntities(new Set(entityIds));
+    }
+  };
+
+  const handleDelete = async () => {
+    if (!deleteTarget) return;
+    try {
+      setIsDeleting(true);
+      if (deleteTarget.type === "data-source") {
+        await tenantAdminApi.deleteDataSource(deleteTarget.id);
+      } else {
+        await tenantAdminApi.deleteConnector(deleteTarget.id);
+      }
+      setDeleteTarget(null);
+      loadData();
+    } catch (err: any) {
+      setError(err.response?.data?.detail || `Failed to delete ${deleteTarget.type}`);
+    } finally {
+      setIsDeleting(false);
+    }
+  };
+
+  // Collect all RLS values across groups
   const allRlsValues = Array.from(new Set(groups.flatMap((g) => g.rls_values)));
 
-  if (user && user.role !== "admin" ) {
+  if (user && user.role !== "admin") {
     return null;
   }
 
@@ -218,9 +213,9 @@ export default function ConnectorsPage() {
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <div>
-          <h2 className="text-2xl font-bold tracking-tight">Connector RLS Configuration</h2>
+          <h2 className="text-2xl font-bold tracking-tight">Data Source RLS</h2>
           <p className="text-muted-foreground">
-            Configure Row-Level Security for {tenant?.name || "your organization"}
+            Assign entities from your data sources to user groups for {tenant?.name || "your organization"}
           </p>
         </div>
       </div>
@@ -235,6 +230,7 @@ export default function ConnectorsPage() {
         </div>
       )}
 
+      {/* How RLS Works */}
       <Card className="border-blue-200 bg-blue-50">
         <CardHeader className="pb-2">
           <CardTitle className="text-blue-800 flex items-center gap-2 text-base">
@@ -242,360 +238,299 @@ export default function ConnectorsPage() {
             How RLS Works
           </CardTitle>
         </CardHeader>
-        <CardContent className="text-blue-700 text-sm">
+        <CardContent className="text-blue-700 text-sm space-y-2">
           <p>
-            Row-Level Security (RLS) filters data based on user group memberships. When enabled,
-            users only see rows where the RLS column value matches one of their group's RLS values.
+            The wizard extracts entities (e.g. stores, branches) from your data source.
+            Assign entities to user groups so each group only sees their own data.
           </p>
-          <div className="mt-2">
-            <strong>Current RLS Values in Groups:</strong>
-            <div className="flex flex-wrap gap-1 mt-1">
-              {allRlsValues.length > 0 ? (
-                allRlsValues.map((value) => (
-                  <span
-                    key={value}
-                    className="inline-flex items-center rounded-full bg-blue-100 px-2 py-0.5 text-xs font-medium text-blue-800"
-                  >
-                    {value}
-                  </span>
-                ))
-              ) : (
-                <span className="text-blue-600 italic">No RLS values defined in any group</span>
-              )}
-            </div>
+          <div>
+            <strong>Steps:</strong>
+            <ol className="list-decimal ml-5 mt-1 space-y-0.5">
+              <li>Select a data source below</li>
+              <li>Choose a user group</li>
+              <li>Pick which entities that group can access</li>
+            </ol>
           </div>
         </CardContent>
       </Card>
 
+      {/* Data Sources Table */}
       <Card>
         <CardHeader>
-          <CardTitle>Search Connectors</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <div className="relative">
-            <Search className="absolute left-3 top-3 h-4 w-4 text-muted-foreground" />
-            <Input
-              placeholder="Search by connector name..."
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              className="pl-10"
-            />
-          </div>
-        </CardContent>
-      </Card>
-
-      <Card>
-        <CardHeader>
-          <CardTitle>Data Connectors ({total})</CardTitle>
+          <CardTitle className="flex items-center gap-2">
+            <Database className="h-5 w-5" />
+            Data Sources ({dataSources.length})
+          </CardTitle>
           <CardDescription>
-            Configure which column is used for RLS filtering on each connector
+            Data sources created via the Setup Wizard. Select a group to assign entities.
           </CardDescription>
         </CardHeader>
         <CardContent>
           {isLoading ? (
             <div className="flex items-center justify-center h-32">
-              <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary"></div>
+              <Loader2 className="h-8 w-8 animate-spin text-primary" />
             </div>
-          ) : connectors.length === 0 ? (
+          ) : dataSources.length === 0 ? (
             <div className="flex flex-col items-center justify-center h-32 text-muted-foreground">
               <Database className="h-8 w-8 mb-2" />
-              <p>No connectors found</p>
-              <p className="text-sm">Create connectors in the Data section first</p>
+              <p className="font-medium">No data sources configured</p>
+              <p className="text-sm">
+                Go to Data Connectors and run the Setup Wizard to create a data source
+              </p>
             </div>
           ) : (
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Connector</TableHead>
-                  <TableHead>Type</TableHead>
-                  <TableHead>RLS Column</TableHead>
-                  <TableHead>RLS Status</TableHead>
-                  <TableHead>Connector Status</TableHead>
-                  <TableHead className="w-[50px]"></TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {connectors.map((connector) => (
-                  <TableRow key={connector.id}>
-                    <TableCell className="font-medium">{connector.name}</TableCell>
-                    <TableCell>
-                      <span className="inline-flex items-center rounded-md bg-gray-100 px-2 py-1 text-xs font-medium text-gray-700">
-                        {connectorTypeLabels[connector.type] || connector.type}
-                      </span>
-                    </TableCell>
-                    <TableCell>
-                      {connector.rls_config ? (
-                        <span className="inline-flex items-center gap-1 rounded-full bg-purple-100 px-2 py-0.5 text-xs font-medium text-purple-700">
-                          <Shield className="h-3 w-3" />
-                          {connector.rls_config.rls_column}
+            <div className="space-y-6">
+              {dataSources.map((ds) => (
+                <Card key={ds.id} className="border">
+                  <CardHeader className="pb-3">
+                    <div className="flex items-center justify-between">
+                      <div className="space-y-1">
+                        <CardTitle className="text-base flex items-center gap-2">
+                          <Table2 className="h-4 w-4 text-muted-foreground" />
+                          {ds.name}
+                        </CardTitle>
+                        <CardDescription className="text-xs space-x-3">
+                          <span>
+                            Connector: <span className="font-medium">{ds.connector_name}</span>
+                          </span>
+                          <span className="inline-flex items-center rounded-md bg-gray-100 px-1.5 py-0.5 text-xs font-medium text-gray-700">
+                            {connectorTypeLabels[ds.connector_type] || ds.connector_type}
+                          </span>
+                          <span>
+                            Table: <span className="font-mono">{ds.source_table}</span>
+                          </span>
+                        </CardDescription>
+                      </div>
+
+                      <div className="flex items-center gap-3">
+                        {/* Entity count badge */}
+                        <span className="inline-flex items-center gap-1 rounded-full bg-purple-100 px-2.5 py-1 text-xs font-medium text-purple-700">
+                          <Users className="h-3 w-3" />
+                          {ds.entity_count} entities
                         </span>
-                      ) : (
-                        <span className="text-muted-foreground text-sm">Not configured</span>
-                      )}
-                    </TableCell>
-                    <TableCell>
-                      {connector.rls_config ? (
+
+                        {/* RLS column badge */}
+                        {ds.rls_column && (
+                          <span className="inline-flex items-center gap-1 rounded-full bg-blue-100 px-2.5 py-1 text-xs font-medium text-blue-700">
+                            <Shield className="h-3 w-3" />
+                            {ds.rls_column}
+                          </span>
+                        )}
+
+                        {/* RLS toggle */}
                         <div className="flex items-center gap-2">
                           <Switch
-                            checked={connector.rls_config.is_enabled}
-                            onCheckedChange={() => handleToggleRls(connector)}
+                            checked={ds.rls_enabled}
+                            onCheckedChange={() => handleToggleRls(ds)}
                           />
-                          <span className="text-sm">
-                            {connector.rls_config.is_enabled ? (
-                              <span className="text-green-600">Enabled</span>
+                          <span className="text-xs">
+                            {ds.rls_enabled ? (
+                              <span className="text-green-600">RLS On</span>
                             ) : (
-                              <span className="text-gray-500">Disabled</span>
+                              <span className="text-gray-500">RLS Off</span>
                             )}
                           </span>
                         </div>
-                      ) : (
-                        <span className="text-muted-foreground text-sm">-</span>
-                      )}
-                    </TableCell>
-                    <TableCell>
-                      {connector.is_active ? (
-                        <span className="inline-flex items-center rounded-full bg-green-100 px-2 py-1 text-xs font-medium text-green-700">
-                          Active
+
+                        {/* Delete data source */}
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="h-8 w-8 text-muted-foreground hover:text-destructive"
+                          onClick={() => setDeleteTarget({ type: "data-source", id: ds.id, name: ds.name })}
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </Button>
+                      </div>
+                    </div>
+                  </CardHeader>
+
+                  <CardContent className="pt-0">
+                    {/* Column mapping summary */}
+                    <div className="flex gap-4 mb-4 text-xs text-muted-foreground">
+                      {Object.entries(ds.column_map).map(([role, col]) => (
+                        <span key={role}>
+                          <span className="capitalize">{role.replace('_', ' ')}:</span>{" "}
+                          <span className="font-mono text-foreground">{col}</span>
                         </span>
-                      ) : (
-                        <span className="inline-flex items-center rounded-full bg-gray-100 px-2 py-1 text-xs font-medium text-gray-700">
-                          Inactive
-                        </span>
-                      )}
-                    </TableCell>
-                    <TableCell>
-                      <DropdownMenu>
-                        <DropdownMenuTrigger asChild>
-                          <Button variant="ghost" size="icon">
-                            <MoreHorizontal className="h-4 w-4" />
-                          </Button>
-                        </DropdownMenuTrigger>
-                        <DropdownMenuContent align="end">
-                          <DropdownMenuItem onClick={() => openDetail(connector)}>
-                            <Eye className="mr-2 h-4 w-4" />
-                            View Details
-                          </DropdownMenuItem>
-                          <DropdownMenuItem onClick={() => handleConfigureRls(connector)}>
-                            <Settings className="mr-2 h-4 w-4" />
-                            {connector.rls_config ? "Edit RLS Config" : "Configure RLS"}
-                          </DropdownMenuItem>
-                          {connector.rls_config && (
-                            <>
-                              <DropdownMenuSeparator />
-                              <DropdownMenuItem
-                                onClick={() => {
-                                  setSelectedConnector(connector);
-                                  setIsDeleteRlsOpen(true);
-                                }}
-                                className="text-red-600"
-                              >
-                                <Trash2 className="mr-2 h-4 w-4" />
-                                Remove RLS Config
-                              </DropdownMenuItem>
-                            </>
-                          )}
-                        </DropdownMenuContent>
-                      </DropdownMenu>
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
+                      ))}
+                    </div>
+
+                    {/* Groups assignment table */}
+                    {groups.length > 0 ? (
+                      <Table>
+                        <TableHeader>
+                          <TableRow>
+                            <TableHead>Group</TableHead>
+                            <TableHead>Assigned Entities</TableHead>
+                            <TableHead className="w-[120px]">Action</TableHead>
+                          </TableRow>
+                        </TableHeader>
+                        <TableBody>
+                          {groups.map((group) => {
+                            const assignedCount = group.rls_values.length;
+                            return (
+                              <TableRow key={group.id}>
+                                <TableCell className="font-medium">
+                                  <div className="flex items-center gap-2">
+                                    <Users className="h-3.5 w-3.5 text-muted-foreground" />
+                                    {group.name}
+                                    <span className="text-xs text-muted-foreground">
+                                      ({group.member_count} members)
+                                    </span>
+                                  </div>
+                                </TableCell>
+                                <TableCell>
+                                  {assignedCount > 0 ? (
+                                    <div className="flex flex-wrap gap-1">
+                                      {group.rls_values.slice(0, 5).map((val) => (
+                                        <span
+                                          key={val}
+                                          className="inline-flex items-center rounded-full bg-green-100 px-2 py-0.5 text-xs font-medium text-green-700"
+                                        >
+                                          {val}
+                                        </span>
+                                      ))}
+                                      {assignedCount > 5 && (
+                                        <span className="text-xs text-muted-foreground">
+                                          +{assignedCount - 5} more
+                                        </span>
+                                      )}
+                                    </div>
+                                  ) : (
+                                    <span className="text-sm text-muted-foreground italic">
+                                      No entities assigned
+                                    </span>
+                                  )}
+                                </TableCell>
+                                <TableCell>
+                                  <Button
+                                    variant="outline"
+                                    size="sm"
+                                    onClick={() => openAssignDialog(ds, group.id)}
+                                  >
+                                    <Settings className="h-3.5 w-3.5 mr-1" />
+                                    Assign
+                                  </Button>
+                                </TableCell>
+                              </TableRow>
+                            );
+                          })}
+                        </TableBody>
+                      </Table>
+                    ) : (
+                      <p className="text-sm text-muted-foreground italic py-4">
+                        No user groups created yet. Create groups in Settings &gt; Groups first.
+                      </p>
+                    )}
+                  </CardContent>
+                </Card>
+              ))}
+            </div>
           )}
         </CardContent>
       </Card>
 
-      {/* RLS Config Dialog */}
-      <Dialog open={isRlsConfigOpen} onOpenChange={setIsRlsConfigOpen}>
-        <DialogContent className="max-w-lg">
+      {/* Delete Confirmation Dialog */}
+      <Dialog open={!!deleteTarget} onOpenChange={(v) => !v && setDeleteTarget(null)}>
+        <DialogContent className="max-w-sm">
           <DialogHeader>
-            <DialogTitle>
-              {selectedConnector?.rls_config ? "Edit" : "Configure"} RLS for{" "}
-              {selectedConnector?.name}
+            <DialogTitle className="flex items-center gap-2 text-destructive">
+              <Trash2 className="h-5 w-5" />
+              Delete {deleteTarget?.type === "connector" ? "Connector" : "Data Source"}
             </DialogTitle>
             <DialogDescription>
-              Select the column that contains values matching your group RLS values
+              Are you sure you want to delete{" "}
+              <span className="font-semibold text-foreground">{deleteTarget?.name}</span>?
+              {deleteTarget?.type === "connector" && " This will also delete all associated data sources."}
+              {" "}This action cannot be undone.
             </DialogDescription>
           </DialogHeader>
-          <div className="space-y-4 py-4">
-            <div className="space-y-2">
-              <Label htmlFor="rls-column">RLS Column</Label>
-              <p className="text-xs text-muted-foreground mb-2">
-                This column's values will be matched against user group RLS values to filter data
-              </p>
-              {isLoadingColumns ? (
-                <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                  <Loader2 className="h-4 w-4 animate-spin" />
-                  Loading columns...
-                </div>
-              ) : columns.length > 0 ? (
-                <Select value={rlsColumn} onValueChange={setRlsColumn}>
-                  <SelectTrigger>
-                    <SelectValue placeholder="Select a column" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {columns.map((col) => (
-                      <SelectItem key={col} value={col}>
-                        {col}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              ) : (
-                <Input
-                  id="rls-column"
-                  placeholder="e.g., store_name, region, department"
-                  value={rlsColumn}
-                  onChange={(e) => setRlsColumn(e.target.value)}
-                />
-              )}
-            </div>
-
-            <div className="space-y-2">
-              <Label>RLS Status</Label>
-              <div className="flex items-center gap-3">
-                <Switch checked={rlsEnabled} onCheckedChange={setRlsEnabled} />
-                <span className="text-sm">
-                  {rlsEnabled ? (
-                    <span className="text-green-600">RLS will be enabled</span>
-                  ) : (
-                    <span className="text-gray-500">RLS will be disabled</span>
-                  )}
-                </span>
-              </div>
-            </div>
-
-            <div className="space-y-2">
-              <Label>Available RLS Values</Label>
-              <p className="text-xs text-muted-foreground">
-                These values are configured in your user groups
-              </p>
-              <div className="flex flex-wrap gap-1 mt-1 p-3 border rounded-md bg-muted/50">
-                {allRlsValues.length > 0 ? (
-                  allRlsValues.map((value) => (
-                    <span
-                      key={value}
-                      className="inline-flex items-center rounded-full bg-purple-100 px-2 py-0.5 text-xs font-medium text-purple-700"
-                    >
-                      {value}
-                    </span>
-                  ))
-                ) : (
-                  <span className="text-muted-foreground italic text-sm">
-                    No RLS values defined. Configure them in User Groups first.
-                  </span>
-                )}
-              </div>
-            </div>
-          </div>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setIsRlsConfigOpen(false)}>
+            <Button variant="outline" onClick={() => setDeleteTarget(null)} disabled={isDeleting}>
               Cancel
             </Button>
-            <Button onClick={handleSaveRls} disabled={!rlsColumn || isSubmitting}>
-              {isSubmitting ? "Saving..." : "Save Configuration"}
+            <Button variant="destructive" onClick={handleDelete} disabled={isDeleting}>
+              {isDeleting ? (
+                <>
+                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                  Deleting...
+                </>
+              ) : (
+                "Delete"
+              )}
             </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
 
-      {/* Connector Detail Dialog */}
-      <Dialog open={isDetailOpen} onOpenChange={setIsDetailOpen}>
-        <DialogContent className="max-w-lg">
+      {/* Entity Assignment Dialog */}
+      <Dialog open={assignDialogOpen} onOpenChange={setAssignDialogOpen}>
+        <DialogContent className="max-w-lg max-h-[80vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
-              <Database className="h-5 w-5" />
-              {selectedConnector?.name}
+              <Users className="h-5 w-5" />
+              Assign Entities to {groups.find((g) => g.id === selectedGroupId)?.name}
             </DialogTitle>
-            <DialogDescription>Connector details and RLS configuration</DialogDescription>
-          </DialogHeader>
-          <div className="space-y-4 py-4">
-            <div className="grid grid-cols-2 gap-4">
-              <div>
-                <Label className="text-xs text-muted-foreground">Type</Label>
-                <p className="font-medium">
-                  {connectorTypeLabels[selectedConnector?.type || ""] || selectedConnector?.type}
-                </p>
-              </div>
-              <div>
-                <Label className="text-xs text-muted-foreground">Status</Label>
-                <p>
-                  {selectedConnector?.is_active ? (
-                    <span className="inline-flex items-center gap-1 text-green-600">
-                      <Check className="h-4 w-4" /> Active
-                    </span>
-                  ) : (
-                    <span className="inline-flex items-center gap-1 text-gray-500">
-                      <X className="h-4 w-4" /> Inactive
-                    </span>
-                  )}
-                </p>
-              </div>
-            </div>
-
-            <div className="border-t pt-4">
-              <Label className="text-sm font-medium">RLS Configuration</Label>
-              {selectedConnector?.rls_config ? (
-                <div className="mt-2 space-y-2">
-                  <div className="flex items-center justify-between p-3 rounded-lg bg-muted/50">
-                    <div>
-                      <p className="text-sm font-medium">Column</p>
-                      <p className="text-sm text-muted-foreground">
-                        {selectedConnector.rls_config.rls_column}
-                      </p>
-                    </div>
-                    <span
-                      className={`inline-flex items-center rounded-full px-2 py-1 text-xs font-medium ${
-                        selectedConnector.rls_config.is_enabled
-                          ? "bg-green-100 text-green-700"
-                          : "bg-gray-100 text-gray-700"
-                      }`}
-                    >
-                      {selectedConnector.rls_config.is_enabled ? "Enabled" : "Disabled"}
-                    </span>
-                  </div>
-                </div>
-              ) : (
-                <p className="mt-2 text-sm text-muted-foreground">
-                  No RLS configuration set for this connector
-                </p>
-              )}
-            </div>
-          </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setIsDetailOpen(false)}>
-              Close
-            </Button>
-            <Button
-              onClick={() => {
-                setIsDetailOpen(false);
-                if (selectedConnector) handleConfigureRls(selectedConnector);
-              }}
-            >
-              <Settings className="mr-2 h-4 w-4" />
-              {selectedConnector?.rls_config ? "Edit RLS" : "Configure RLS"}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
-      {/* Delete RLS Config Dialog */}
-      <Dialog open={isDeleteRlsOpen} onOpenChange={setIsDeleteRlsOpen}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Remove RLS Configuration</DialogTitle>
             <DialogDescription>
-              Are you sure you want to remove the RLS configuration from &quot;
-              {selectedConnector?.name}&quot;? All users will have unrestricted access to this
-              connector's data.
+              Select which entities this group can access from{" "}
+              <span className="font-medium">{selectedDs?.name}</span>
             </DialogDescription>
           </DialogHeader>
+
+          <div className="space-y-3 py-2">
+            {/* Select all toggle */}
+            <div className="flex items-center justify-between border-b pb-2">
+              <Button variant="ghost" size="sm" onClick={toggleAll}>
+                {selectedEntities.size === entityIds.length ? "Deselect All" : "Select All"}
+              </Button>
+              <span className="text-xs text-muted-foreground">
+                {selectedEntities.size} of {entityIds.length} selected
+              </span>
+            </div>
+
+            {isLoadingEntities ? (
+              <div className="flex items-center justify-center py-8">
+                <Loader2 className="h-6 w-6 animate-spin" />
+              </div>
+            ) : entityIds.length === 0 ? (
+              <p className="text-sm text-muted-foreground py-4 text-center">
+                No entities found for this data source
+              </p>
+            ) : (
+              <div className="space-y-1 max-h-64 overflow-y-auto">
+                {entityIds.map((entityId) => (
+                  <label
+                    key={entityId}
+                    className="flex items-center gap-3 rounded-md px-3 py-2 hover:bg-muted/50 cursor-pointer"
+                  >
+                    <Checkbox
+                      checked={selectedEntities.has(entityId)}
+                      onCheckedChange={() => toggleEntity(entityId)}
+                    />
+                    <span className="text-sm font-mono">{entityId}</span>
+                    {selectedEntities.has(entityId) && (
+                      <Check className="h-3.5 w-3.5 text-green-600 ml-auto" />
+                    )}
+                  </label>
+                ))}
+              </div>
+            )}
+          </div>
+
           <DialogFooter>
-            <Button variant="outline" onClick={() => setIsDeleteRlsOpen(false)}>
+            <Button variant="outline" onClick={() => setAssignDialogOpen(false)}>
               Cancel
             </Button>
-            <Button onClick={handleDeleteRls} disabled={isSubmitting} variant="destructive">
-              {isSubmitting ? "Removing..." : "Remove RLS Config"}
+            <Button onClick={handleSaveEntities} disabled={isSaving}>
+              {isSaving ? (
+                <>
+                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                  Saving...
+                </>
+              ) : (
+                `Save (${selectedEntities.size} entities)`
+              )}
             </Button>
           </DialogFooter>
         </DialogContent>

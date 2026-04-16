@@ -17,7 +17,7 @@ import { Loader2, Copy, CheckCircle2 } from "lucide-react";
 import { api } from "@/lib/api/client";
 import { toast } from "sonner";
 
-type DuplicateMethod = "first" | "last" | "drop_all";
+type DuplicateMethod = "keep_all" | "keep_first" | "keep_last" | "drop_all" | "aggregate_sum" | "aggregate_mean";
 
 interface DuplicateHandlerProps {
   datasetId: string;
@@ -28,9 +28,12 @@ interface DuplicateHandlerProps {
 }
 
 const methodOptions: { value: DuplicateMethod; label: string; description: string }[] = [
-  { value: "first", label: "Keep First", description: "Keep the first occurrence of duplicates" },
-  { value: "last", label: "Keep Last", description: "Keep the last occurrence of duplicates" },
-  { value: "drop_all", label: "Drop All", description: "Remove all duplicate rows" },
+  { value: "keep_all", label: "Keep All", description: "Retain all duplicate entries (no changes)" },
+  { value: "keep_first", label: "Keep First", description: "Keep the first occurrence of duplicates" },
+  { value: "keep_last", label: "Keep Last", description: "Keep the last occurrence of duplicates" },
+  { value: "aggregate_sum", label: "Aggregate Sum", description: "Combine duplicates by summing values" },
+  { value: "aggregate_mean", label: "Aggregate Mean", description: "Combine duplicates by averaging values" },
+  { value: "drop_all", label: "Drop All", description: "Remove all rows involved in duplicates" },
 ];
 
 export function DuplicateHandler({
@@ -48,7 +51,7 @@ export function DuplicateHandler({
   } | null>(null);
   const [loading, setLoading] = useState(false);
   const [processing, setProcessing] = useState(false);
-  const [selectedMethod, setSelectedMethod] = useState<DuplicateMethod>("first");
+  const [selectedMethod, setSelectedMethod] = useState<DuplicateMethod>("keep_first");
   const [subsetColumns, setSubsetColumns] = useState<string[]>([]);
   const [error, setError] = useState<string | null>(null);
 
@@ -94,7 +97,13 @@ export function DuplicateHandler({
       if (entityId) params.append("entity_id", entityId);
       if (entityColumn) params.append("entity_column", entityColumn);
 
-      await api.post(
+      const result = await api.post<{
+        success: boolean;
+        message: string;
+        rows_before: number;
+        rows_after: number;
+        rows_affected: number;
+      }>(
         `/preprocessing/${datasetId}/duplicates${params.toString() ? `?${params}` : ""}`,
         {
           method: selectedMethod,
@@ -102,7 +111,12 @@ export function DuplicateHandler({
         }
       );
 
-      toast.success("Duplicates handled successfully");
+      const methodLabel = methodOptions.find((m) => m.value === selectedMethod)?.label || selectedMethod;
+      if (selectedMethod === "keep_all") {
+        toast.success("All rows kept — no duplicates removed");
+      } else {
+        toast.success(`${result.rows_affected} duplicate row${result.rows_affected !== 1 ? "s" : ""} handled using ${methodLabel}`);
+      }
       if (onProcessingComplete) {
         onProcessingComplete();
       }
@@ -128,7 +142,7 @@ export function DuplicateHandler({
           <div className="space-y-2">
             <Label>Check Duplicates Based On (Optional)</Label>
             <p className="text-xs text-muted-foreground mb-2">
-              Select specific columns to check for duplicates. If none selected, all columns are used.
+              Select specific columns to check for duplicates. If none selected, Entity + Date columns are used automatically.
             </p>
             <div className="max-h-32 overflow-y-auto border rounded-md p-2 space-y-1">
               {availableColumns.map((col) => (
@@ -217,9 +231,12 @@ export function DuplicateHandler({
             <div className="p-3 bg-muted rounded-md text-sm">
               <p className="font-medium">Impact Preview:</p>
               <p className="text-muted-foreground mt-1">
-                {selectedMethod === "first" && `Will remove ${analysis.duplicate_rows} rows, keeping ${analysis.total_rows - analysis.duplicate_rows} rows`}
-                {selectedMethod === "last" && `Will remove ${analysis.duplicate_rows} rows, keeping ${analysis.total_rows - analysis.duplicate_rows} rows`}
-                {selectedMethod === "drop_all" && `Will remove all ${analysis.duplicate_groups * 2} rows involved in duplicates`}
+                {selectedMethod === "keep_all" && "No rows will be removed"}
+                {selectedMethod === "keep_first" && `Will remove ${analysis.duplicate_rows} rows, keeping first occurrence`}
+                {selectedMethod === "keep_last" && `Will remove ${analysis.duplicate_rows} rows, keeping last occurrence`}
+                {selectedMethod === "aggregate_sum" && `Will merge duplicate groups by summing numeric values`}
+                {selectedMethod === "aggregate_mean" && `Will merge duplicate groups by averaging numeric values`}
+                {selectedMethod === "drop_all" && `Will remove all rows involved in duplicates`}
               </p>
             </div>
 

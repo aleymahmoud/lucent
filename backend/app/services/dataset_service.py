@@ -106,7 +106,7 @@ class DatasetService:
         # Extract entities and date range if columns detected
         if dataset.date_column and dataset.value_column:
             if dataset.entity_column:
-                dataset.entities = df[dataset.entity_column].unique().tolist()[:100]  # Limit to 100 entities
+                dataset.entities = [str(e) for e in df[dataset.entity_column].unique().tolist()[:100]]
             dataset.date_range = self._get_date_range(df, dataset.date_column)
 
         # Compute and cache summary
@@ -133,6 +133,7 @@ class DatasetService:
             "is_active": True,
             "file_size": dataset.file_size,
             "file_type": dataset.file_type,
+            "uploaded_by": self.user_id,
             "uploaded_at": dataset.uploaded_at.isoformat() if dataset.uploaded_at else None,
         })
 
@@ -469,9 +470,14 @@ class DatasetService:
         self,
         skip: int = 0,
         limit: int = 50,
-        search: Optional[str] = None
+        search: Optional[str] = None,
+        is_admin: bool = False,
     ) -> Tuple[List[Dataset], int]:
-        """List all datasets for the tenant from Redis"""
+        """List datasets for the tenant from Redis.
+
+        Non-admin users only see datasets they uploaded.
+        Admins see all datasets in the tenant.
+        """
         logger.info(f"Listing datasets for tenant: {self.tenant_id}")
         try:
             redis = await get_redis()
@@ -503,6 +509,11 @@ class DatasetService:
                         if not cached.get("is_active", True):
                             continue
 
+                        # Non-admin users only see their own datasets
+                        if not is_admin and self.user_id:
+                            if cached.get("uploaded_by") and cached["uploaded_by"] != self.user_id:
+                                continue
+
                         # Apply search filter
                         if search and search.lower() not in cached.get("name", "").lower():
                             continue
@@ -526,7 +537,7 @@ class DatasetService:
                             row_count=cached.get("row_count"),
                             column_count=cached.get("column_count"),
                             columns=cached.get("columns") or [],
-                            entities=cached.get("entities") or [],
+                            entities=[str(e) for e in (cached.get("entities") or [])],
                             file_size=cached.get("file_size") or 0,
                             file_type=cached.get("file_type") or "csv",
                             date_range=cached.get("date_range") or {},
@@ -840,7 +851,7 @@ class DatasetService:
         df = await self._get_data_from_redis(dataset.redis_key)
         if df is not None:
             if entity_column:
-                dataset.entities = df[entity_column].unique().tolist()[:100]
+                dataset.entities = [str(e) for e in df[entity_column].unique().tolist()[:100]]
             else:
                 dataset.entities = []
             dataset.date_range = self._get_date_range(df, date_column)
@@ -945,6 +956,7 @@ class DatasetService:
             "is_active": True,
             "file_size": dataset.file_size,
             "file_type": dataset.file_type,
+            "uploaded_by": self.user_id,
             "uploaded_at": dataset.uploaded_at.isoformat() if dataset.uploaded_at else None,
         })
 

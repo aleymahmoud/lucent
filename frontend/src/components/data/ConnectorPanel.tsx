@@ -212,7 +212,7 @@ export function ConnectorPanel({ onDataFetched }: ConnectorPanelProps) {
     try {
       // First, create the connector if it doesn't exist yet
       const { connectorApi } = await import("@/lib/api/endpoints");
-      const connectorName = `${selectedConfig.name} - ${formData.host || formData.database || "New"}`;
+      const connectorName = `${selectedConfig.name} - ${formData.database || String(formData.host || "").split(".")[0] || "New"}`;
       const createRes = await connectorApi.create({
         name: connectorName,
         type: selectedType as string,
