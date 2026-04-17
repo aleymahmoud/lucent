@@ -15,6 +15,8 @@
 | `ljung_box(residuals, lags=None)` | `backend/app/forecasting/residual_tests.py` | Ljung-Box autocorrelation test returning ResidualTestResult | Spec 002 |
 | `breusch_pagan(residuals, fitted)` | `backend/app/forecasting/residual_tests.py` | Breusch-Pagan heteroscedasticity test returning ResidualTestResult | Spec 002 |
 | `shapiro_wilk(residuals)` | `backend/app/forecasting/residual_tests.py` | Shapiro-Wilk normality test returning ResidualTestResult (skipped if n > 5000) | Spec 002 |
+| `AuditService.list_events(db, **filters)` | `backend/app/services/audit_service.py` | Paginated, filtered audit log query for a tenant | Spec 003 P1 |
+| `AuditService.export_csv(db, **filters)` | `backend/app/services/audit_service.py` | Stream filtered audit events as CSV (capped at 10k rows) | Spec 003 P1 |
 
 ## Shared Constants
 

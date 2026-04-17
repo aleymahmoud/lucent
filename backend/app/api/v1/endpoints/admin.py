@@ -52,12 +52,21 @@ async def get_platform_stats(
         select(func.count(User.id)).where(User.is_approved == False, User.is_active == True)
     )
 
+    # Forecasts in the last 24 hours (platform-wide)
+    from datetime import datetime, timedelta
+    from app.models.forecast_history import ForecastHistory
+    cutoff = datetime.utcnow() - timedelta(hours=24)
+    forecasts_24h = await db.scalar(
+        select(func.count(ForecastHistory.id)).where(ForecastHistory.created_at >= cutoff)
+    )
+
     return PlatformStats(
         total_tenants=total_tenants or 0,
         active_tenants=active_tenants or 0,
         total_users=total_users or 0,
         active_users=active_users or 0,
-        pending_approvals=pending_approvals or 0
+        pending_approvals=pending_approvals or 0,
+        forecasts_last_24h=forecasts_24h or 0,
     )
 
 

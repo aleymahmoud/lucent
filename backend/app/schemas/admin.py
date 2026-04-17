@@ -88,3 +88,4 @@ class PlatformStats(BaseModel):
     total_users: int
     active_users: int
     pending_approvals: int
+    forecasts_last_24h: int = 0

@@ -323,6 +323,27 @@ export interface ErrorResponse {
   details?: Record<string, any>;
 }
 
+// Audit log — tenant-scoped security events
+export interface AuditEvent {
+  id: string;
+  created_at: string;
+  user_id?: string | null;
+  user_email?: string | null;
+  action: string;
+  resource_type?: string | null;
+  resource_id?: string | null;
+  ip_address?: string | null;
+  user_agent?: string | null;
+  details?: Record<string, any> | null;
+}
+
+export interface AuditListResponse {
+  events: AuditEvent[];
+  total: number;
+  page: number;
+  page_size: number;
+}
+
 // Chart Types
 export interface ChartData {
   x: (string | number)[];

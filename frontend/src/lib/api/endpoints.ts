@@ -112,6 +112,7 @@ interface PlatformStats {
   total_users: number;
   active_users: number;
   pending_approvals: number;
+  forecasts_last_24h?: number;
 }
 
 export const authApi = {

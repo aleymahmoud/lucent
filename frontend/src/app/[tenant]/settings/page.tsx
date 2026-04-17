@@ -9,7 +9,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useAuth } from "@/contexts/AuthContext";
 import { userApi } from "@/lib/api/endpoints";
-import { Users, UsersRound, Link2, Palette, Settings, KeyRound, Loader2, CheckCircle2, AlertCircle } from "lucide-react";
+import { Users, UsersRound, Link2, Palette, Settings, KeyRound, Loader2, CheckCircle2, AlertCircle, ScrollText } from "lucide-react";
 import { toast } from "sonner";
 
 const settingsItems = [
@@ -39,6 +39,13 @@ const settingsItems = [
     description: "Customize your organization's appearance",
     href: "/settings/branding",
     icon: Palette,
+    adminOnly: true,
+  },
+  {
+    name: "Audit Log",
+    description: "Review security-relevant actions across your tenant",
+    href: "/settings/audit",
+    icon: ScrollText,
     adminOnly: true,
   },
 ];
