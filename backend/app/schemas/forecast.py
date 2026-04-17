@@ -28,6 +28,8 @@ class ForecastFrequency(str, Enum):
     DAILY = "D"
     WEEKLY = "W"
     MONTHLY = "M"
+    QUARTERLY = "Q"
+    YEARLY = "Y"
 
 
 # ============================================
@@ -86,6 +88,7 @@ class ForecastRequest(BaseModel):
     method: ForecastMethod
     horizon: int = Field(30, ge=1, le=365, description="Forecast horizon in periods")
     frequency: ForecastFrequency = ForecastFrequency.DAILY
+    frequency_auto_detect: bool = Field(True, description="Auto-detect frequency from data (overrides 'frequency' when True)")
     confidence_level: float = Field(0.95, ge=0.5, le=0.99, description="Confidence interval level")
 
     # Method-specific settings (only one should be provided based on method)
@@ -101,7 +104,7 @@ class ForecastRequest(BaseModel):
     value_column: Optional[str] = None
     entity_column: Optional[str] = None
 
-    # Regressor columns (optional - auto-detected from extra numeric columns if not provided)
+    # Regressor columns — explicit list only; no implicit auto-detection
     regressor_columns: Optional[List[str]] = None
 
 
@@ -112,6 +115,7 @@ class BatchForecastRequest(BaseModel):
     method: ForecastMethod
     horizon: int = Field(30, ge=1, le=365)
     frequency: ForecastFrequency = ForecastFrequency.DAILY
+    frequency_auto_detect: bool = True
     confidence_level: float = Field(0.95, ge=0.5, le=0.99)
 
     # Method-specific settings
@@ -119,8 +123,16 @@ class BatchForecastRequest(BaseModel):
     ets_settings: Optional[ETSSettingsRequest] = None
     prophet_settings: Optional[ProphetSettingsRequest] = None
 
-    # Regressor columns
+    # Cross-validation
+    cross_validation: Optional[CrossValidationRequest] = None
+
+    # Regressor columns — explicit list only
     regressor_columns: Optional[List[str]] = None
+
+    # Column mapping
+    date_column: Optional[str] = None
+    value_column: Optional[str] = None
+    entity_column: Optional[str] = None
 
 
 class AutoParamsRequest(BaseModel):
@@ -188,6 +200,13 @@ class ForecastResultResponse(BaseModel):
     model_summary: Optional[ModelSummaryResponse] = None
     cv_results: Optional[CrossValidationResultResponse] = None
 
+    # Frequency detection (populated on every run)
+    detected_frequency: Optional[str] = None  # "D" | "W" | "M" | "Q" | "Y"
+    detected_seasonal_period: Optional[int] = None
+
+    # Non-fatal advisories surfaced during execution
+    warnings: List[str] = []
+
     # Timestamps
     created_at: datetime
     completed_at: Optional[datetime] = None
@@ -244,3 +263,21 @@ class ForecastPreviewResponse(BaseModel):
     predictions: List[PredictionResponse]
     metrics: Optional[MetricsResponse] = None
     status: ForecastStatus
+
+
+class FrequencyDetectionRequest(BaseModel):
+    """Pre-flight frequency detection request"""
+    dataset_id: str
+    entity_id: Optional[str] = None
+    entity_column: Optional[str] = None
+    date_column: Optional[str] = None
+
+
+class FrequencyDetectionResponse(BaseModel):
+    """Pre-flight frequency detection result for UI hinting"""
+    detected_frequency: str  # "D" | "W" | "M" | "Q" | "Y"
+    detected_seasonal_period: int
+    median_interval_days: float
+    observation_count: int
+    irregular_intervals_pct: float
+    warnings: List[str] = []

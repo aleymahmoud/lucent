@@ -19,9 +19,13 @@ from app.schemas.forecast import (
     ForecastRequest, BatchForecastRequest,
     ForecastResultResponse, MetricsResponse, ModelSummaryResponse,
     PredictionResponse, MethodInfoResponse, AutoParamsResponse,
-    DataCharacteristics, BatchForecastStatusResponse
+    DataCharacteristics, BatchForecastStatusResponse,
+    CrossValidationResultResponse, FrequencyDetectionResponse
 )
 from app.forecasting import ARIMAForecaster, ETSForecaster, ProphetForecaster
+from app.forecasting.frequency import detect_frequency as detect_freq, irregular_intervals_pct
+from app.forecasting.data_validator import validate_for_method, DataValidationResult
+from app.forecasting.cross_validation import run_cv as run_cv_engine, CVRunResult
 
 logger = logging.getLogger(__name__)
 
@@ -58,10 +62,12 @@ class ForecastService:
         """
         Get time series data for forecasting.
         Falls back to raw data if no preprocessing exists.
-        Returns (series, error, exog_df) where exog_df contains regressor columns if available.
+        Returns (series, error, exog_df).
+
+        Regressors: only columns explicitly listed in `regressor_columns` are used.
+        No implicit auto-detection (US2). Missing columns return a validation error.
         """
         try:
-            # Get data - preprocessing service already handles fallback to raw data
             if entity_id and entity_id != "All Data":
                 logger.info(f"_get_forecast_data: fetching entity={entity_id!r}, entity_column={entity_column!r}")
                 df = await self.preprocessing_service.get_entity_data(
@@ -80,7 +86,6 @@ class ForecastService:
             if len(df) == 0:
                 return None, "Dataset is empty", None
 
-            # Auto-detect columns if not specified
             if not date_column:
                 date_column = self._detect_date_column(df)
             if not value_column:
@@ -96,58 +101,37 @@ class ForecastService:
             if value_column not in df.columns:
                 return None, f"Value column '{value_column}' not found in dataset", None
 
-            # Prepare time series
             df[date_column] = pd.to_datetime(df[date_column], errors='coerce')
             df = df.dropna(subset=[date_column, value_column])
             df = df.sort_values(date_column)
 
-            # Convert value column to numeric
             df[value_column] = pd.to_numeric(df[value_column], errors='coerce')
             df = df.dropna(subset=[value_column])
 
-            if len(df) < 10:
-                return None, f"Insufficient data points ({len(df)}). Need at least 10 observations.", None
+            # Note: per-method min-data validation is done separately in run_forecast
+            # after frequency is detected. Here we keep only a defensive minimum
+            # so the function itself doesn't crash downstream.
+            if len(df) < 2:
+                return None, f"Insufficient data points ({len(df)}). Need at least 2 observations.", None
 
-            # Create series with date index
             series = pd.Series(
                 df[value_column].values,
                 index=pd.DatetimeIndex(df[date_column]),
                 name=value_column
             )
 
-            # Extract regressor columns (exogenous variables)
+            # Regressor handling — EXPLICIT ONLY (US2)
             exog_df = None
-            core_columns = {date_column, value_column}
-            if entity_column:
-                core_columns.add(entity_column)
-            # Also exclude Entity_ID and Entity_Name by convention
-            core_columns.update({"Entity_ID", "Entity_Name", "entity_id", "entity_name"})
-
             if regressor_columns:
-                # Use explicitly specified regressors
+                missing = [c for c in regressor_columns if c not in df.columns]
+                if missing:
+                    return None, f"Regressor column(s) not found in dataset: {', '.join(missing)}", None
+
                 available = [c for c in regressor_columns if c in df.columns]
                 if available:
                     exog_df = df[[date_column] + available].copy()
                     exog_df.set_index(date_column, inplace=True)
                     for col in available:
-                        exog_df[col] = pd.to_numeric(exog_df[col], errors='coerce')
-                    # Fill NaN with column mean (don't drop rows)
-                    col_means = exog_df.mean(numeric_only=True)
-                    exog_df = exog_df.fillna(col_means)
-                    exog_df = exog_df.dropna(axis=1, how='all')  # drop columns still all-NaN
-            else:
-                # Auto-detect: any extra numeric column not in core columns
-                extra_cols = [c for c in df.columns if c not in core_columns]
-                numeric_extras = []
-                for col in extra_cols:
-                    converted = pd.to_numeric(df[col], errors='coerce')
-                    # Require 90%+ valid numeric values to qualify as a regressor
-                    if converted.notna().sum() > len(df) * 0.9:
-                        numeric_extras.append(col)
-                if numeric_extras:
-                    exog_df = df[[date_column] + numeric_extras].copy()
-                    exog_df.set_index(date_column, inplace=True)
-                    for col in numeric_extras:
                         exog_df[col] = pd.to_numeric(exog_df[col], errors='coerce')
                     col_means = exog_df.mean(numeric_only=True)
                     exog_df = exog_df.fillna(col_means)
@@ -158,6 +142,54 @@ class ForecastService:
         except Exception as e:
             logger.error(f"Error preparing forecast data: {e}")
             return None, str(e), None
+
+    # ============================================
+    # Frequency Detection (public for endpoint)
+    # ============================================
+
+    async def detect_frequency(
+        self,
+        dataset_id: str,
+        entity_id: Optional[str] = None,
+        entity_column: Optional[str] = None,
+        date_column: Optional[str] = None,
+    ) -> FrequencyDetectionResponse:
+        """Pre-flight frequency detection for UI hinting."""
+        series, error, _ = await self._get_forecast_data(
+            dataset_id,
+            entity_id or "All Data",
+            date_column=date_column,
+            entity_column=entity_column,
+        )
+        if error or series is None:
+            raise ValueError(error or "Could not load dataset")
+
+        dates = series.index
+        freq, period, median = detect_freq(dates)
+        irregular = irregular_intervals_pct(dates)
+
+        warnings: List[str] = []
+        n = int(series.notna().sum())
+        if n < 14 and freq == "D":
+            warnings.append(f"Dataset has only {n} observations — weekly seasonality may be unreliable.")
+        if n < 730 and freq == "D":
+            warnings.append(
+                f"Dataset has {n} observations. Yearly seasonality (if enabled) may invent patterns "
+                f"(recommended >= 730 daily observations)."
+            )
+        if irregular > 10.0:
+            warnings.append(
+                f"Data has irregular intervals: {irregular:.1f}% of gaps deviate significantly from the median."
+            )
+
+        return FrequencyDetectionResponse(
+            detected_frequency=freq,
+            detected_seasonal_period=period,
+            median_interval_days=round(median, 3),
+            observation_count=n,
+            irregular_intervals_pct=round(irregular, 2),
+            warnings=warnings,
+        )
 
     # ============================================
     # Forecast Execution
@@ -211,14 +243,50 @@ class ForecastService:
 
             logger.info(f"Forecast data OK: series_len={len(series)}, exog={exog_df.columns.tolist() if exog_df is not None else None}")
 
+            # --- Frequency auto-detection (US1) ---
+            detected_freq, detected_period, _ = detect_freq(series.index)
+            result.detected_frequency = detected_freq
+            result.detected_seasonal_period = detected_period
+
+            effective_frequency = detected_freq
+            if not request.frequency_auto_detect:
+                # User wants manual frequency — honour it, but warn if mismatch
+                effective_frequency = request.frequency.value
+                if effective_frequency != detected_freq:
+                    result.warnings.append(
+                        f"Selected frequency {effective_frequency} does not match "
+                        f"detected frequency {detected_freq}. Using {effective_frequency} as requested."
+                    )
+            # Propagate effective_frequency into the request for the forecaster factory
+            request.frequency = ForecastFrequency(effective_frequency)
+
+            # --- Per-method data validation (US3) ---
+            prophet_settings = request.prophet_settings
+            validation: DataValidationResult = validate_for_method(
+                series,
+                method=request.method.value,
+                seasonal_period=detected_period if effective_frequency == detected_freq else 1,
+                prophet_yearly=bool(prophet_settings.yearly_seasonality) if prophet_settings else False,
+                prophet_weekly=bool(prophet_settings.weekly_seasonality) if prophet_settings else False,
+                prophet_daily=bool(prophet_settings.daily_seasonality) if prophet_settings else False,
+                dates=series.index,
+            )
+            if validation.blocking_error:
+                logger.warning(f"Validation blocked forecast: {validation.blocking_error}")
+                result.status = ForecastStatus.FAILED
+                result.error = validation.blocking_error
+                await self._store_result(result)
+                return result
+            result.warnings.extend(validation.warnings)
+
             # Only pass exog to Prophet (ARIMA/ETS don't support it in our implementation)
             use_exog = exog_df if (request.method == ForecastMethod.PROPHET and exog_df is not None and len(exog_df.columns) > 0) else None
 
             result.progress = 30
             await self._store_result(result)
 
-            # Create forecaster
-            forecaster = self._create_forecaster(request)
+            # Create forecaster (now receives effective frequency + seasonal_period)
+            forecaster = self._create_forecaster(request, seasonal_period=detected_period)
 
             # Fit model
             result.progress = 50
@@ -232,10 +300,10 @@ class ForecastService:
             # Generate predictions
             output = forecaster.predict(request.horizon, exog=use_exog)
 
-            result.progress = 90
+            result.progress = 85
             await self._store_result(result)
 
-            # Build response
+            # Build predictions + metrics
             result.predictions = [
                 PredictionResponse(
                     date=str(row['date'].date()) if hasattr(row['date'], 'date') else str(row['date']),
@@ -259,8 +327,34 @@ class ForecastService:
                 regressors_used=list(use_exog.columns) if use_exog is not None else None
             )
 
-            result.status = ForecastStatus.COMPLETED
+            # --- Cross-validation (US5) ---
+            if request.cross_validation and request.cross_validation.enabled:
+                try:
+                    cv_result = self._run_cross_validation(series, request, use_exog, detected_period)
+                    result.cv_results = CrossValidationResultResponse(
+                        folds=len(cv_result.folds),
+                        method=cv_result.method,
+                        metrics_per_fold=[
+                            MetricsResponse(mae=f.mae, rmse=f.rmse, mape=f.mape)
+                            for f in cv_result.folds
+                        ],
+                        average_metrics=MetricsResponse(
+                            mae=cv_result.average_mae,
+                            rmse=cv_result.average_rmse,
+                            mape=cv_result.average_mape,
+                        ),
+                    )
+                    if cv_result.reduced_folds:
+                        result.warnings.append(
+                            f"Requested {cv_result.requested_folds} CV folds; reduced to "
+                            f"{len(cv_result.folds)} due to dataset size."
+                        )
+                except Exception as cv_err:
+                    logger.warning(f"CV failed (non-blocking): {cv_err}")
+                    result.warnings.append(f"Cross-validation failed: {cv_err}")
+
             result.progress = 100
+            result.status = ForecastStatus.COMPLETED
             result.completed_at = datetime.utcnow()
 
             # Save predictions permanently to PostgreSQL (non-blocking)
@@ -277,6 +371,29 @@ class ForecastService:
 
         await self._store_result(result)
         return result
+
+    def _run_cross_validation(
+        self,
+        series: pd.Series,
+        request: ForecastRequest,
+        exog: Optional[pd.DataFrame],
+        seasonal_period: int,
+    ) -> CVRunResult:
+        """Execute CV using a forecaster factory closure."""
+        cv = request.cross_validation
+
+        def factory():
+            return self._create_forecaster(request, seasonal_period=seasonal_period)
+
+        return run_cv_engine(
+            series=series,
+            forecaster_factory=factory,
+            folds=cv.folds,
+            method=cv.method,
+            initial_train_size=cv.initial_train_size,
+            horizon=request.horizon,
+            exog=exog,
+        )
 
     async def start_batch_forecast(
         self,
@@ -329,14 +446,18 @@ class ForecastService:
                 single_request = ForecastRequest(
                     dataset_id=request.dataset_id,
                     entity_id=entity_id,
-                    entity_column=entity_column,
+                    entity_column=entity_column or request.entity_column,
+                    date_column=request.date_column,
+                    value_column=request.value_column,
                     method=request.method,
                     horizon=request.horizon,
                     frequency=request.frequency,
+                    frequency_auto_detect=request.frequency_auto_detect,
                     confidence_level=request.confidence_level,
                     arima_settings=request.arima_settings,
                     ets_settings=request.ets_settings,
                     prophet_settings=request.prophet_settings,
+                    cross_validation=request.cross_validation,
                     regressor_columns=request.regressor_columns
                 )
 
@@ -443,28 +564,29 @@ class ForecastService:
     # Forecaster Factory
     # ============================================
 
-    def _create_forecaster(self, request: ForecastRequest):
-        """Create appropriate forecaster based on method"""
+    def _create_forecaster(self, request: ForecastRequest, seasonal_period: int = 1):
+        """Create appropriate forecaster based on method.
+
+        `seasonal_period` comes from frequency auto-detection and is used to
+        set sensible defaults for seasonal-aware models.
+        """
         frequency = request.frequency.value
 
         if request.method == ForecastMethod.ARIMA:
             settings = request.arima_settings
-            if settings:
+            if settings and not settings.auto:
+                # Manual mode — honour user overrides
                 return ARIMAForecaster(
                     frequency=frequency,
                     confidence_level=request.confidence_level,
-                    auto=settings.auto if settings.auto is not None else True,
-                    order=(
-                        settings.p or 1,
-                        settings.d or 1,
-                        settings.q or 1
-                    ) if not settings.auto else (1, 1, 1),
+                    auto=False,
+                    order=(settings.p or 1, settings.d or 1, settings.q or 1),
                     seasonal_order=(
                         settings.P or 0,
                         settings.D or 0,
                         settings.Q or 0,
-                        settings.s or 1
-                    ) if settings.s else None
+                        settings.s or seasonal_period
+                    ) if (settings.s or seasonal_period > 1) else None
                 )
             return ARIMAForecaster(
                 frequency=frequency,
@@ -474,20 +596,22 @@ class ForecastService:
 
         elif request.method == ForecastMethod.ETS:
             settings = request.ets_settings
-            if settings:
+            if settings and not settings.auto:
                 return ETSForecaster(
                     frequency=frequency,
                     confidence_level=request.confidence_level,
-                    auto=settings.auto if settings.auto is not None else True,
+                    auto=False,
                     trend=settings.trend,
                     seasonal=settings.seasonal,
-                    seasonal_periods=settings.seasonal_periods,
+                    seasonal_periods=settings.seasonal_periods or (seasonal_period if seasonal_period > 1 else None),
                     damped_trend=settings.damped_trend
                 )
+            # Auto mode — supply detected seasonal period as hint
             return ETSForecaster(
                 frequency=frequency,
                 confidence_level=request.confidence_level,
-                auto=True
+                auto=True,
+                seasonal_periods=seasonal_period if seasonal_period > 1 else None
             )
 
         else:  # Prophet

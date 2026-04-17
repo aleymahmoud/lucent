@@ -267,6 +267,21 @@ export const forecastApi = {
 
   autoParams: (method: string, datasetId: string, entityId: string) =>
     api.post<any>(`/forecast/auto-params/${method}?dataset_id=${datasetId}&entity_id=${entityId}`),
+
+  detectFrequency: (data: {
+    dataset_id: string;
+    entity_id?: string | null;
+    entity_column?: string | null;
+    date_column?: string | null;
+  }) =>
+    api.post<{
+      detected_frequency: string;
+      detected_seasonal_period: number;
+      median_interval_days: number;
+      observation_count: number;
+      irregular_intervals_pct: number;
+      warnings: string[];
+    }>('/forecast/detect-frequency', data),
 };
 
 // ============================================

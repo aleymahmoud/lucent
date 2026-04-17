@@ -11,3 +11,4 @@ export { RegressorSelector } from "./RegressorSelector";
 export { ForecastProgress } from "./ForecastProgress";
 export { ForecastResults } from "./ForecastResults";
 export { BatchForecastResults } from "./BatchForecastResults";
+export { ForecastWarnings } from "./ForecastWarnings";

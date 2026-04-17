@@ -16,7 +16,8 @@ from app.services.forecast_service import ForecastService
 from app.schemas.forecast import (
     ForecastMethod, ForecastRequest, BatchForecastRequest,
     ForecastResultResponse, ForecastStatus, MethodInfoResponse, AutoParamsResponse,
-    BatchForecastStatusResponse, ForecastPreviewResponse
+    BatchForecastStatusResponse, ForecastPreviewResponse,
+    FrequencyDetectionRequest, FrequencyDetectionResponse
 )
 from app.config import settings
 from app.core.validators import validate_uuid
@@ -296,4 +297,39 @@ async def preview_forecast(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Error generating preview: {str(e)}"
+        )
+
+
+# ============================================
+# Frequency Detection (pre-flight, no model fitting)
+# ============================================
+
+@router.post("/detect-frequency", response_model=FrequencyDetectionResponse)
+async def detect_frequency_endpoint(
+    request: FrequencyDetectionRequest,
+    current_user: User = Depends(get_current_user),
+):
+    """Detect the time-series frequency of a dataset/entity without running a forecast.
+
+    Used by the UI to render "Detected: Daily" hints and surface warnings
+    before the user submits.
+    """
+    validate_uuid(request.dataset_id, "dataset_id")
+    service = ForecastService(current_user.tenant_id, current_user.id)
+    try:
+        return await service.detect_frequency(
+            dataset_id=request.dataset_id,
+            entity_id=request.entity_id,
+            entity_column=request.entity_column,
+            date_column=request.date_column,
+        )
+    except ValueError as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(e)
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error detecting frequency: {str(e)}"
         )

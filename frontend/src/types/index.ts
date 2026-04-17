@@ -128,10 +128,27 @@ export interface EntityStats {
 export interface ForecastConfig {
   method: 'arima' | 'ets' | 'prophet';
   horizon: number;
-  frequency: 'daily' | 'weekly' | 'monthly';
+  frequency: 'daily' | 'weekly' | 'monthly' | 'quarterly' | 'yearly';
+  frequencyAutoDetect?: boolean; // default true
   confidenceLevel: number; // 0.80, 0.90, 0.95, 0.99
   methodSettings: ARIMASettings | ETSSettings | ProphetSettings;
   crossValidation?: CrossValidationConfig;
+}
+
+export interface FrequencyDetectionResponse {
+  detected_frequency: 'D' | 'W' | 'M' | 'Q' | 'Y';
+  detected_seasonal_period: number;
+  median_interval_days: number;
+  observation_count: number;
+  irregular_intervals_pct: number;
+  warnings: string[];
+}
+
+export interface CrossValidationResult {
+  folds: number;
+  method: 'rolling' | 'expanding';
+  metrics_per_fold: Array<{ mae: number; rmse: number; mape: number }>;
+  average_metrics: { mae: number; rmse: number; mape: number };
 }
 
 export interface ARIMASettings {
@@ -181,6 +198,10 @@ export interface ForecastResult {
   predictions: Prediction[];
   metrics: ForecastMetrics;
   modelSummary: ModelSummary;
+  detected_frequency?: string;
+  detected_seasonal_period?: number;
+  warnings?: string[];
+  cv_results?: CrossValidationResult;
   createdAt: string;
   completedAt?: string;
   error?: string;

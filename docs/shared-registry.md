@@ -9,6 +9,9 @@
 | Name | File Path | Purpose | Created By |
 |------|-----------|---------|------------|
 | `cn()` | `frontend/src/lib/utils.ts` | Merges Tailwind class names conditionally | Reem |
+| `detect_frequency(dates)` | `backend/app/forecasting/frequency.py` | Auto-detect time series frequency (D/W/M/Q/Y) from datetime index; returns (freq_code, seasonal_period) | Spec 001 |
+| `validate_for_method(series, method, seasonal_period)` | `backend/app/forecasting/data_validator.py` | Per-method min-data + zero-variance + irregular-intervals validation; returns DataValidationResult | Spec 001 |
+| `run_cv(series, forecaster_factory, folds, method, initial_train_size, horizon)` | `backend/app/forecasting/cross_validation.py` | Rolling/expanding window CV engine returning CVRunResult | Spec 001 |
 
 ## Shared Constants
 

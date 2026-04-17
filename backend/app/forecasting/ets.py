@@ -216,8 +216,21 @@ class ETSForecaster(BaseForecaster):
         # Detect trend
         self.trend = self._detect_trend(y)
 
-        # Detect seasonality
-        self.seasonal, self.seasonal_periods = self._detect_seasonality(y)
+        # Detect seasonality — if a hint period was supplied externally, prefer it
+        if self.seasonal_periods and self.seasonal_periods > 1 and n >= 2 * self.seasonal_periods:
+            try:
+                autocorr = pd.Series(y.values).autocorr(lag=self.seasonal_periods)
+                if autocorr and autocorr > 0.3:
+                    seasonal_type = 'mul' if (np.all(y > 0) and np.std(y) / np.mean(y) > 0.3) else 'add'
+                    self.seasonal = seasonal_type
+                else:
+                    self.seasonal = None
+                    self.seasonal_periods = None
+            except Exception:
+                self.seasonal = None
+                self.seasonal_periods = None
+        else:
+            self.seasonal, self.seasonal_periods = self._detect_seasonality(y)
 
         # Damped trend usually works better for longer horizons
         self.damped_trend = self.trend is not None
@@ -253,6 +266,8 @@ class ETSForecaster(BaseForecaster):
             'D': [7, 30],   # Weekly, monthly for daily data
             'W': [4, 52],   # Monthly, yearly for weekly data
             'M': [12],      # Yearly for monthly data
+            'Q': [4],       # Yearly for quarterly data
+            'Y': [],        # No further seasonality for yearly
         }
 
         periods_to_check = seasonal_periods.get(self.frequency, [])

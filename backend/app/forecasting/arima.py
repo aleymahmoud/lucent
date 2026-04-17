@@ -47,38 +47,100 @@ class ARIMAForecaster(BaseForecaster):
         self.auto = auto
 
     def fit(self, y: pd.Series, exog: Optional[pd.DataFrame] = None) -> None:
-        """Fit ARIMA model to the data"""
+        """Fit ARIMA model with cascading fallback on failure.
+
+        Fallback levels:
+            0 = primary attempt (full auto-ARIMA or user-supplied order)
+            1 = simpler non-seasonal (max p=q=2, d=1, no seasonal)
+            2 = ARIMA(1,1,1)
+        """
         y = self._validate_data(y)
         self._training_data = y
+        self.fallback_level = 0
 
         # Auto-detect parameters if enabled
         if self.auto:
             self.order, self.seasonal_order = self._auto_arima(y)
             logger.info(f"Auto-detected ARIMA order: {self.order}, seasonal: {self.seasonal_order}")
 
+        # Attempt 1: primary
+        if self._try_fit(y, self.order, self.seasonal_order):
+            return
+
+        # Attempt 2: simpler non-seasonal
+        logger.info("ARIMA primary fit failed — retrying with simpler non-seasonal config")
+        self.fallback_level = 1
+        simpler_order, _ = self._simpler_auto_arima(y)
+        if self._try_fit(y, simpler_order, None):
+            self.order = simpler_order
+            self.seasonal_order = None
+            return
+
+        # Attempt 3: ARIMA(1,1,1)
+        logger.info("ARIMA simpler fit failed — falling back to ARIMA(1,1,1)")
+        self.fallback_level = 2
+        if self._try_fit(y, (1, 1, 1), None):
+            self.order = (1, 1, 1)
+            self.seasonal_order = None
+            return
+
+        # All attempts failed
+        logger.error("ARIMA fallback chain exhausted")
+        raise ValueError(
+            "ARIMA could not fit this dataset. Try ETS or Prophet instead."
+        )
+
+    def _try_fit(
+        self,
+        y: pd.Series,
+        order: Tuple[int, int, int],
+        seasonal_order: Optional[Tuple[int, int, int, int]],
+    ) -> bool:
+        """Attempt to fit with the given order. Returns True on success."""
         try:
-            if self.seasonal_order and self.seasonal_order[3] > 1:
-                # Use SARIMAX for seasonal data
-                self.model = SARIMAX(
-                    y,
-                    order=self.order,
-                    seasonal_order=self.seasonal_order,
-                    enforce_stationarity=False,
-                    enforce_invertibility=False
-                ).fit(disp=False)
-            else:
-                # Use ARIMA for non-seasonal data
-                self.model = ARIMA(
-                    y,
-                    order=self.order
-                ).fit()
-
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore")
+                if seasonal_order and seasonal_order[3] > 1:
+                    self.model = SARIMAX(
+                        y,
+                        order=order,
+                        seasonal_order=seasonal_order,
+                        enforce_stationarity=False,
+                        enforce_invertibility=False,
+                    ).fit(disp=False)
+                else:
+                    self.model = ARIMA(y, order=order).fit()
             self.is_fitted = True
-            logger.info(f"ARIMA model fitted successfully. AIC: {self.model.aic:.2f}")
-
+            logger.info(
+                f"ARIMA fit OK (fallback_level={self.fallback_level}): "
+                f"order={order}, seasonal_order={seasonal_order}, AIC={self.model.aic:.2f}"
+            )
+            return True
         except Exception as e:
-            logger.error(f"ARIMA fitting failed: {e}")
-            raise ValueError(f"Failed to fit ARIMA model: {str(e)}")
+            logger.warning(
+                f"ARIMA fit failed at level {self.fallback_level} "
+                f"(order={order}, seasonal={seasonal_order}): {e}"
+            )
+            return False
+
+    def _simpler_auto_arima(self, y: pd.Series) -> Tuple[Tuple[int, int, int], None]:
+        """Simpler grid search used by fallback level 1: max p=q=2, d=1, no seasonal."""
+        best_aic = float('inf')
+        best_order = (1, 1, 1)
+        for p in range(3):
+            for q in range(3):
+                if p == 0 and q == 0:
+                    continue
+                try:
+                    with warnings.catch_warnings():
+                        warnings.simplefilter("ignore")
+                        model = ARIMA(y, order=(p, 1, q)).fit()
+                        if model.aic < best_aic:
+                            best_aic = model.aic
+                            best_order = (p, 1, q)
+                except Exception:
+                    continue
+        return best_order, None
 
     def predict(self, horizon: int, exog: Optional[pd.DataFrame] = None) -> ForecastOutput:
         """Generate predictions"""
@@ -124,10 +186,12 @@ class ARIMAForecaster(BaseForecaster):
             'seasonal_order': list(self.seasonal_order) if self.seasonal_order else None,
             'aic': self.model.aic,
             'bic': self.model.bic,
+            'fallback_level': getattr(self, 'fallback_level', 0),
             'parameters': {
                 'p': self.order[0],
                 'd': self.order[1],
-                'q': self.order[2]
+                'q': self.order[2],
+                'fallback_level': getattr(self, 'fallback_level', 0),
             }
         }
 
@@ -172,19 +236,86 @@ class ARIMAForecaster(BaseForecaster):
         }
 
     def _auto_arima(self, y: pd.Series) -> Tuple[Tuple[int, int, int], Optional[Tuple[int, int, int, int]]]:
-        """Simple auto ARIMA parameter selection"""
-        # Determine differencing order
-        d = self._find_d(y)
+        """Auto ARIMA parameter selection with joint seasonal search.
 
-        # Grid search for p, q (simplified)
+        If a seasonal period is detected, jointly searches (p,d,q) x (P,D,Q)
+        using AIC. Matches old R `auto.arima` bounds: max p=3, max q=3, max P=2, max Q=2.
+        Falls back to non-seasonal grid search if no seasonality detected.
+        """
+        import time
+
+        d = self._find_d(y)
+        seasonal_period = self._detect_seasonal_period(y)
+
+        start_time = time.time()
+        time_budget = 30.0  # seconds, per Decision 2 in research.md
+
+        if seasonal_period is None or len(y) < 2 * seasonal_period + 5:
+            # Non-seasonal path
+            return self._non_seasonal_search(y, d), None
+
+        # Joint seasonal search
         best_aic = float('inf')
         best_order = (1, d, 1)
+        best_seasonal = (0, 0, 0, seasonal_period)
+        no_improve_count = 0
 
-        # Try different combinations
+        # Non-seasonal range: p in 0..3, q in 0..3 = 16 combos
+        # Seasonal range: P in 0..2, D in 0..1, Q in 0..2 = 18 combos
+        # Total worst case: 288 fits
+        for P in range(3):
+            for D in range(2):
+                for Q in range(3):
+                    if time.time() - start_time > time_budget:
+                        logger.info(
+                            f"ARIMA auto timed out after {time_budget}s; using best-so-far: "
+                            f"order={best_order}, seasonal={best_seasonal}"
+                        )
+                        return best_order, best_seasonal if best_aic < float('inf') else None
+
+                    for p in range(4):
+                        for q in range(4):
+                            if p == 0 and q == 0 and P == 0 and Q == 0:
+                                continue
+                            try:
+                                with warnings.catch_warnings():
+                                    warnings.simplefilter("ignore")
+                                    model = SARIMAX(
+                                        y,
+                                        order=(p, d, q),
+                                        seasonal_order=(P, D, Q, seasonal_period),
+                                        enforce_stationarity=False,
+                                        enforce_invertibility=False,
+                                    ).fit(disp=False, maxiter=50)
+                                    if model.aic < best_aic:
+                                        best_aic = model.aic
+                                        best_order = (p, d, q)
+                                        best_seasonal = (P, D, Q, seasonal_period)
+                                        no_improve_count = 0
+                                    else:
+                                        no_improve_count += 1
+                                # Early termination after 20 non-improving combos
+                                if no_improve_count > 20:
+                                    logger.info(
+                                        f"ARIMA auto early-terminated: no AIC improvement for 20 combos. "
+                                        f"Best: order={best_order}, seasonal={best_seasonal}"
+                                    )
+                                    return best_order, best_seasonal
+                            except Exception:
+                                continue
+
+        if best_aic == float('inf'):
+            return (1, d, 1), None
+        return best_order, best_seasonal
+
+    def _non_seasonal_search(self, y: pd.Series, d: int) -> Tuple[int, int, int]:
+        """Non-seasonal (p, d, q) grid search."""
+        best_aic = float('inf')
+        best_order = (1, d, 1)
         for p in range(4):
             for q in range(4):
                 if p == 0 and q == 0:
-                    continue  # Skip (0, d, 0)
+                    continue
                 try:
                     with warnings.catch_warnings():
                         warnings.simplefilter("ignore")
@@ -194,11 +325,37 @@ class ARIMAForecaster(BaseForecaster):
                             best_order = (p, d, q)
                 except Exception:
                     continue
+        return best_order
 
-        # Detect seasonality
-        seasonal_order = self._detect_seasonality(y)
+    def _detect_seasonal_period(self, y: pd.Series) -> Optional[int]:
+        """Detect the dominant seasonal period (if any) via ACF.
 
-        return best_order, seasonal_order
+        Stricter than before: threshold 0.4 and period must repeat across at least 2 cycles.
+        """
+        n = len(y)
+        seasonal_periods = {
+            'D': [7, 30, 365],
+            'W': [4, 52],
+            'M': [12],
+            'Q': [4],
+            'Y': [],
+        }
+        periods_to_check = seasonal_periods.get(self.frequency, [])
+
+        for period in periods_to_check:
+            # Need at least 2 full cycles
+            if n < 2 * period:
+                continue
+            try:
+                acf_values = acf(y.dropna(), nlags=min(n - 1, 2 * period + 1), fft=True)
+                # Stricter threshold; also confirm repetition at 2*period
+                lag1 = abs(acf_values[period]) if len(acf_values) > period else 0
+                lag2 = abs(acf_values[2 * period]) if len(acf_values) > 2 * period else 0
+                if lag1 > 0.4 and lag2 > 0.25:
+                    return period
+            except Exception:
+                continue
+        return None
 
     def _find_d(self, y: pd.Series) -> int:
         """Find optimal differencing order using ADF test"""
@@ -223,29 +380,14 @@ class ARIMAForecaster(BaseForecaster):
         return 1  # Default to d=1
 
     def _detect_seasonality(self, y: pd.Series) -> Optional[Tuple[int, int, int, int]]:
-        """Detect seasonal patterns in data"""
-        n = len(y)
+        """Deprecated — kept for backward compatibility.
 
-        # Check for common seasonal periods based on frequency
-        seasonal_periods = {
-            'D': [7, 30, 365],  # Weekly, monthly, yearly for daily data
-            'W': [4, 52],       # Monthly, yearly for weekly data
-            'M': [12],          # Yearly for monthly data
-        }
-
-        periods_to_check = seasonal_periods.get(self.frequency, [])
-
-        for period in periods_to_check:
-            if n > 2 * period:
-                try:
-                    # Check ACF at the seasonal lag
-                    acf_values = acf(y.dropna(), nlags=period + 1, fft=True)
-                    if abs(acf_values[period]) > 0.3:  # Threshold for seasonality
-                        return (1, 1, 1, period)
-                except Exception:
-                    continue
-
-        return None
+        Prefer _detect_seasonal_period() + joint search in _auto_arima(). This
+        method still returns a hardcoded (1,1,1,period) shape and is no longer
+        called by fit(); left here in case external callers depended on it.
+        """
+        period = self._detect_seasonal_period(y)
+        return (1, 1, 1, period) if period else None
 
     def _check_stationarity(self, y: pd.Series) -> bool:
         """Check if series is stationary using ADF test"""

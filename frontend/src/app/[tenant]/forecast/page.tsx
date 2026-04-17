@@ -23,7 +23,9 @@ import {
   ForecastProgress,
   ForecastResults,
   CrossValidationSettings,
+  ForecastWarnings,
 } from "@/components/forecast";
+import { forecastApi } from "@/lib/api/endpoints";
 import type { Entity } from "@/components/forecast";
 import { BatchForecastResults } from "@/components/forecast/BatchForecastResults";
 
@@ -50,7 +52,8 @@ interface CrossValidationConfig {
 interface ForecastConfig {
   method: "arima" | "ets" | "prophet";
   horizon: number;
-  frequency: "daily" | "weekly" | "monthly";
+  frequency: "daily" | "weekly" | "monthly" | "quarterly" | "yearly";
+  frequencyAutoDetect?: boolean;
   confidenceLevel: number;
   methodSettings: MethodSettings;
   crossValidation: CrossValidationConfig;
@@ -84,6 +87,15 @@ interface ForecastResult {
     coefficients?: Record<string, number>;
     diagnostics?: Record<string, unknown>;
     regressors_used?: string[];
+  };
+  detected_frequency?: string;
+  detected_seasonal_period?: number;
+  warnings?: string[];
+  cv_results?: {
+    folds: number;
+    method: string;
+    metrics_per_fold: Array<{ mae: number; rmse: number; mape: number }>;
+    average_metrics: { mae: number; rmse: number; mape: number };
   };
   created_at: string;
   completed_at?: string;
@@ -134,6 +146,8 @@ export default function ForecastPage() {
   const [batchResult, setBatchResult] = useState<BatchForecastResult | null>(null);
   const [activeTab, setActiveTab] = useState("configure");
   const [selectedRegressors, setSelectedRegressors] = useState<string[]>([]);
+  const [detectedFrequency, setDetectedFrequency] = useState<string | null>(null);
+  const [preRunWarnings, setPreRunWarnings] = useState<string[]>([]);
 
   const pollTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const isBatchMode = selectedEntity === ALL_ENTITIES_VALUE;
@@ -161,7 +175,42 @@ export default function ForecastPage() {
     setSelectedEntity(entityId);
     setForecastResult(null);
     setBatchResult(null);
+    setDetectedFrequency(null);
+    setPreRunWarnings([]);
   }, []);
+
+  // Auto-detect frequency when entity selection changes
+  useEffect(() => {
+    if (!selectedDataset || !selectedEntity) {
+      setDetectedFrequency(null);
+      setPreRunWarnings([]);
+      return;
+    }
+    const entityForDetection = selectedEntity === ALL_ENTITIES_VALUE
+      ? (allEntities.length > 0 ? allEntities[0].name : null)
+      : selectedEntity;
+    if (!entityForDetection) return;
+
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await forecastApi.detectFrequency({
+          dataset_id: selectedDataset.id,
+          entity_id: entityForDetection,
+        });
+        if (!cancelled) {
+          setDetectedFrequency(res.detected_frequency);
+          setPreRunWarnings(res.warnings ?? []);
+        }
+      } catch {
+        if (!cancelled) {
+          setDetectedFrequency(null);
+          setPreRunWarnings([]);
+        }
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [selectedDataset, selectedEntity, allEntities]);
 
   const handleEntitiesLoaded = useCallback((entities: Entity[]) => {
     setAllEntities(entities);
@@ -254,7 +303,9 @@ export default function ForecastPage() {
     setActiveTab("progress");
 
     // Build common payload parts
-    const frequencyMap: Record<string, string> = { daily: "D", weekly: "W", monthly: "M" };
+    const frequencyMap: Record<string, string> = {
+      daily: "D", weekly: "W", monthly: "M", quarterly: "Q", yearly: "Y"
+    };
     const methodSettingsKey =
       forecastConfig.method === "arima" ? "arima_settings"
       : forecastConfig.method === "ets" ? "ets_settings"
@@ -272,7 +323,8 @@ export default function ForecastPage() {
           entity_ids: entityNames,
           method: forecastConfig.method,
           horizon: forecastConfig.horizon,
-          frequency: frequencyMap[forecastConfig.frequency],
+          frequency: frequencyMap[forecastConfig.frequency] || "D",
+          frequency_auto_detect: forecastConfig.frequencyAutoDetect !== false,
           confidence_level: forecastConfig.confidenceLevel,
           [methodSettingsKey]: forecastConfig.methodSettings,
           ...(selectedRegressors.length > 0 && { regressor_columns: selectedRegressors }),
@@ -345,7 +397,8 @@ export default function ForecastPage() {
           entity_id: selectedEntity,
           method: forecastConfig.method,
           horizon: forecastConfig.horizon,
-          frequency: frequencyMap[forecastConfig.frequency],
+          frequency: frequencyMap[forecastConfig.frequency] || "D",
+          frequency_auto_detect: forecastConfig.frequencyAutoDetect !== false,
           confidence_level: forecastConfig.confidenceLevel,
           [methodSettingsKey]: forecastConfig.methodSettings,
           ...(selectedRegressors.length > 0 && { regressor_columns: selectedRegressors }),
@@ -484,7 +537,16 @@ export default function ForecastPage() {
           />
 
           {/* Forecast Settings */}
-          <ForecastSettings config={forecastConfig} onChange={handleConfigChange} />
+          <ForecastSettings
+            config={forecastConfig}
+            onChange={handleConfigChange}
+            detectedFrequency={detectedFrequency ?? undefined}
+          />
+
+          {/* Pre-run warnings (frequency detection, data characteristics) */}
+          {preRunWarnings.length > 0 && (
+            <ForecastWarnings warnings={preRunWarnings} variant="pre-run" />
+          )}
 
           {/* Method-specific Settings with Auto-detect */}
           <div className="space-y-2">
@@ -619,6 +681,11 @@ export default function ForecastPage() {
             </TabsContent>
 
             <TabsContent value="results" className="mt-6 space-y-6">
+              {/* Post-run warnings from the forecast response */}
+              {forecastResult?.warnings && forecastResult.warnings.length > 0 && (
+                <ForecastWarnings warnings={forecastResult.warnings} variant="post-run" />
+              )}
+
               {isBatchMode && batchResult ? (
                 <BatchForecastResults batchResult={batchResult} />
               ) : forecastResult && forecastResult.status === "completed" ? (
