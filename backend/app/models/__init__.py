@@ -13,6 +13,7 @@ from app.models.dataset import Dataset
 from app.models.connector_data_source import ConnectorDataSource
 from app.models.data_snapshot import DataSnapshot, SnapshotStatus
 from app.models.forecast_prediction import ForecastPrediction
+from app.models.invite import Invite
 
 __all__ = [
     "Tenant",
@@ -32,4 +33,5 @@ __all__ = [
     "DataSnapshot",
     "SnapshotStatus",
     "ForecastPrediction",
+    "Invite",
 ]

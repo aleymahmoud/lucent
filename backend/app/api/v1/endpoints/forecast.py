@@ -22,6 +22,7 @@ from app.schemas.forecast import (
 from app.config import settings
 from app.core.validators import validate_uuid
 from app.core.rate_limit import RateLimitForecast
+from app.core.limits import require_forecast_quota
 
 REDIS_FORECAST_PREFIX = "forecast:"
 REDIS_FORECAST_TTL = 3600
@@ -92,6 +93,7 @@ async def run_forecast(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
     _rate_limit: None = Depends(RateLimitForecast),
+    _quota: None = Depends(require_forecast_quota),
 ):
     """
     Run a forecast for a single entity.
@@ -167,6 +169,7 @@ async def run_batch_forecast(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
     _rate_limit: None = Depends(RateLimitForecast),
+    _quota: None = Depends(require_forecast_quota),
 ):
     """
     Run forecasts for multiple entities.

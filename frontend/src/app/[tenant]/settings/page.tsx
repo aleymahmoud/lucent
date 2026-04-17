@@ -9,7 +9,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useAuth } from "@/contexts/AuthContext";
 import { userApi } from "@/lib/api/endpoints";
-import { Users, UsersRound, Link2, Palette, Settings, KeyRound, Loader2, CheckCircle2, AlertCircle, ScrollText } from "lucide-react";
+import { Users, UsersRound, Link2, Palette, Settings, KeyRound, Loader2, CheckCircle2, AlertCircle, ScrollText, Gauge } from "lucide-react";
 import { toast } from "sonner";
 
 const settingsItems = [
@@ -46,6 +46,13 @@ const settingsItems = [
     description: "Review security-relevant actions across your tenant",
     href: "/settings/audit",
     icon: ScrollText,
+    adminOnly: true,
+  },
+  {
+    name: "Usage & Limits",
+    description: "See current consumption vs your plan limits",
+    href: "/settings/usage",
+    icon: Gauge,
     adminOnly: true,
   },
 ];

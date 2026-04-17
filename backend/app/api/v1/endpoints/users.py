@@ -8,6 +8,7 @@ from sqlalchemy.orm import selectinload
 from typing import Optional
 
 from app.core.deps import get_db, get_current_tenant_admin
+from app.core.limits import require_user_quota
 from app.core.security import get_password_hash
 from app.models import User, UserRole, UserGroup, UserGroupMembership, Connector
 from app.schemas.users import (
@@ -168,9 +169,10 @@ async def list_tenant_users(
 async def create_tenant_user(
     user_data: TenantUserCreate,
     current_user: User = Depends(get_current_tenant_admin),
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
+    _quota: None = Depends(require_user_quota),
 ):
-    """Create a new user in the current tenant (Tenant Admin only)"""
+    """Create a new user in the current tenant (Tenant Admin only). Enforces max_users plan limit."""
     tenant_id = current_user.tenant_id
 
     # Check if email already exists

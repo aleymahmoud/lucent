@@ -9,6 +9,7 @@ import {
   type TenantUserResponse,
   type TenantStats,
 } from "@/lib/api/endpoints";
+import { InviteUserDialog } from "@/components/settings/InviteUserDialog";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -270,15 +271,18 @@ export default function TenantUsersPage() {
             Manage users in {tenant?.name || "your organization"}
           </p>
         </div>
-        <Button
-          onClick={() => {
-            setFormData({ email: "", password: "", full_name: "", role: "analyst" });
-            setIsCreateOpen(true);
-          }}
-        >
-          <UserPlus className="mr-2 h-4 w-4" />
-          Add User
-        </Button>
+        <div className="flex gap-2">
+          <InviteUserDialog onInvited={() => loadData()} />
+          <Button
+            onClick={() => {
+              setFormData({ email: "", password: "", full_name: "", role: "analyst" });
+              setIsCreateOpen(true);
+            }}
+          >
+            <UserPlus className="mr-2 h-4 w-4" />
+            Add User
+          </Button>
+        </div>
       </div>
 
       {/* Error Alert */}

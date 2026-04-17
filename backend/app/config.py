@@ -64,6 +64,18 @@ class Settings(BaseSettings):
     RETENTION_CLEANUP_INTERVAL_HOURS: int = 24   # How often the cleanup runs (informational; actual schedule is crontab in celery_app.py)
     RETENTION_BATCH_SIZE: int = 100              # Number of expired snapshots processed per batch
 
+    # SMTP — optional. When SMTP_HOST is empty, email flows fall back
+    # to showing invite links in-UI rather than sending emails.
+    SMTP_HOST: Optional[str] = None
+    SMTP_PORT: int = 587
+    SMTP_USER: Optional[str] = None
+    SMTP_PASSWORD: Optional[str] = None
+    SMTP_FROM: Optional[str] = None
+    SMTP_USE_TLS: bool = True
+
+    # Frontend URL (used to build invite + password-reset links in emails)
+    FRONTEND_URL: str = "http://localhost:3840"
+
     # Logging
     LOG_LEVEL: str = "INFO"
     LOG_FILE: str = "./logs/lucent.log"
