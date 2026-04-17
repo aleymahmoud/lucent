@@ -202,9 +202,38 @@ export interface ForecastResult {
   detected_seasonal_period?: number;
   warnings?: string[];
   cv_results?: CrossValidationResult;
+  forecast_statistics?: ForecastStatistics;
   createdAt: string;
   completedAt?: string;
   error?: string;
+}
+
+export interface ModelCoefficient {
+  name: string;
+  estimate: number;
+  std_error?: number;
+  z_stat?: number;
+  p_value?: number;
+  significant?: boolean;
+}
+
+export interface ResidualTestResult {
+  test_name: string;
+  statistic: number;
+  p_value: number;
+  interpretation: string;
+  passes: boolean;
+}
+
+export interface ForecastStatistics {
+  mean: number;
+  median: number;
+  min: number;
+  max: number;
+  q25: number;
+  q75: number;
+  iqr: number;
+  average_interval_width: number;
 }
 
 export interface Prediction {
@@ -227,10 +256,13 @@ export interface ForecastMetrics {
 export interface ModelSummary {
   method: string;
   parameters: Record<string, any>;
-  coefficients?: Record<string, number>;
+  // New shape — array of ModelCoefficient objects with estimate/SE/z/p.
+  // Legacy records may still expose Record<string, number>; handle both in UI.
+  coefficients?: ModelCoefficient[] | Record<string, number>;
   standardErrors?: Record<string, number>;
   pValues?: Record<string, number>;
   diagnostics?: DiagnosticsData;
+  residuals?: number[];
 }
 
 // Diagnostics Types

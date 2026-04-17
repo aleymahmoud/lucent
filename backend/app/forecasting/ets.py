@@ -168,12 +168,40 @@ class ETSForecaster(BaseForecaster):
                 'gamma': round(float(params.get('smoothing_seasonal', 0)), 4) if self.seasonal else None,
                 'phi': round(float(params.get('damping_trend', 0)), 4) if self.damped_trend else None,
             }
-            # Remove None values
             model_summary['parameters'] = {
                 k: v for k, v in model_summary['parameters'].items() if v is not None
             }
         except Exception:
             pass
+
+        # Build coefficient list (ETS estimates; SE/p-values often unavailable on bounded params)
+        try:
+            coefficients = []
+            for name, est in self.model.params.items():
+                coef = {"name": str(name), "estimate": round(float(est), 6)}
+                # Try SE / p-values — statsmodels' HW fit sometimes exposes these,
+                # sometimes not. We silently skip when missing.
+                try:
+                    if hasattr(self.model, "bse") and name in self.model.bse.index:
+                        coef["std_error"] = round(float(self.model.bse[name]), 6)
+                except Exception:
+                    pass
+                try:
+                    if hasattr(self.model, "tvalues") and name in self.model.tvalues.index:
+                        coef["z_stat"] = round(float(self.model.tvalues[name]), 4)
+                except Exception:
+                    pass
+                try:
+                    if hasattr(self.model, "pvalues") and name in self.model.pvalues.index:
+                        p = float(self.model.pvalues[name])
+                        coef["p_value"] = round(p, 6)
+                        coef["significant"] = bool(p < 0.05)
+                except Exception:
+                    pass
+                coefficients.append(coef)
+            model_summary['coefficients'] = coefficients
+        except Exception as exc:
+            logger.warning(f"Failed to extract ETS coefficients: {exc}")
 
         return ForecastOutput(
             predictions=predictions,

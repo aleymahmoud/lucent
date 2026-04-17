@@ -20,7 +20,17 @@ import {
   Loader2,
   AlertCircle,
 } from "lucide-react";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { Badge } from "@/components/ui/badge";
 import { resultsApi } from "@/lib/api/endpoints";
+
+type TableViewMode = "forecast-only" | "full-data";
 
 // -------------------------------------------------------
 // Types — backend returns snake_case, we normalise here
@@ -61,6 +71,7 @@ function fmt(n: number): string {
 
 export function ResultsTable({ forecastId, pageSize = 50 }: ResultsTableProps) {
   const [page, setPage] = useState(1);
+  const [viewMode, setViewMode] = useState<TableViewMode>("forecast-only");
 
   const { data, isLoading, isError, error, isFetching } = useQuery<PredictionsResponse>({
     queryKey: ["results", "data", forecastId, page, pageSize],
@@ -108,16 +119,25 @@ export function ResultsTable({ forecastId, pageSize = 50 }: ResultsTableProps) {
   return (
     <Card>
       <CardHeader className="pb-3">
-        <div className="flex items-center justify-between">
+        <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
             <CardTitle>Prediction Data</CardTitle>
             <CardDescription>
               {total.toLocaleString()} predictions with confidence intervals
             </CardDescription>
           </div>
-          {isFetching && (
-            <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
-          )}
+          <div className="flex items-center gap-3">
+            {isFetching && <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />}
+            <Select value={viewMode} onValueChange={(v) => setViewMode(v as TableViewMode)}>
+              <SelectTrigger className="w-[180px] h-9">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="forecast-only">Forecast Only</SelectItem>
+                <SelectItem value="full-data">Full Data (detailed)</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
         </div>
       </CardHeader>
 
@@ -128,34 +148,54 @@ export function ResultsTable({ forecastId, pageSize = 50 }: ResultsTableProps) {
               <TableRow>
                 <TableHead className="w-12 text-center text-muted-foreground">#</TableHead>
                 <TableHead>Date</TableHead>
+                {viewMode === "full-data" && <TableHead>Type</TableHead>}
                 <TableHead className="text-right">Predicted Value</TableHead>
                 <TableHead className="text-right">Lower Bound</TableHead>
                 <TableHead className="text-right">Upper Bound</TableHead>
+                {viewMode === "full-data" && <TableHead className="text-right">Interval Width</TableHead>}
               </TableRow>
             </TableHeader>
             <TableBody>
               {predictions.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={5} className="py-12 text-center text-muted-foreground">
+                  <TableCell
+                    colSpan={viewMode === "full-data" ? 7 : 5}
+                    className="py-12 text-center text-muted-foreground"
+                  >
                     No predictions available
                   </TableCell>
                 </TableRow>
               ) : (
-                predictions.map((p, i) => (
-                  <TableRow key={p.date + i}>
-                    <TableCell className="text-center text-muted-foreground text-sm">
-                      {firstRow + i}
-                    </TableCell>
-                    <TableCell className="font-medium">{p.date}</TableCell>
-                    <TableCell className="text-right font-mono">{fmt(p.value)}</TableCell>
-                    <TableCell className="text-right font-mono text-muted-foreground">
-                      {fmt(p.lower_bound)}
-                    </TableCell>
-                    <TableCell className="text-right font-mono text-muted-foreground">
-                      {fmt(p.upper_bound)}
-                    </TableCell>
-                  </TableRow>
-                ))
+                predictions.map((p, i) => {
+                  const width = p.upper_bound - p.lower_bound;
+                  return (
+                    <TableRow key={p.date + i}>
+                      <TableCell className="text-center text-muted-foreground text-sm">
+                        {firstRow + i}
+                      </TableCell>
+                      <TableCell className="font-medium">{p.date}</TableCell>
+                      {viewMode === "full-data" && (
+                        <TableCell>
+                          <Badge variant="outline" className="text-[10px]">
+                            Forecast
+                          </Badge>
+                        </TableCell>
+                      )}
+                      <TableCell className="text-right font-mono">{fmt(p.value)}</TableCell>
+                      <TableCell className="text-right font-mono text-muted-foreground">
+                        {fmt(p.lower_bound)}
+                      </TableCell>
+                      <TableCell className="text-right font-mono text-muted-foreground">
+                        {fmt(p.upper_bound)}
+                      </TableCell>
+                      {viewMode === "full-data" && (
+                        <TableCell className="text-right font-mono text-muted-foreground">
+                          {fmt(width)}
+                        </TableCell>
+                      )}
+                    </TableRow>
+                  );
+                })
               )}
             </TableBody>
           </Table>

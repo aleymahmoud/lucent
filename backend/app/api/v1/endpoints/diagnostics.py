@@ -259,3 +259,62 @@ async def compare_models(
         )
 
     return result
+
+
+# ============================================
+# GET /diagnostics/{forecast_id}/export
+# ============================================
+
+from fastapi import Query
+from fastapi.responses import HTMLResponse
+
+
+@router.get(
+    "/{forecast_id}/export",
+    response_class=HTMLResponse,
+    summary="Export diagnostics report",
+    description=(
+        "Generate a self-contained HTML report with all diagnostics content "
+        "(residual analysis, tests, model parameters, quality scores). "
+        "The user's browser can print-to-PDF if a PDF is needed."
+    ),
+)
+async def export_diagnostics_report(
+    forecast_id: str,
+    format: str = Query("html", description="Export format — only 'html' supported in v1"),
+    current_user: User = Depends(get_current_user),
+):
+    validate_uuid(forecast_id, "forecast_id")
+
+    if format not in ("html", "pdf"):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="format must be 'html' or 'pdf'",
+        )
+    if format == "pdf":
+        # PDF rendering deferred — return 501 with a helpful hint.
+        raise HTTPException(
+            status_code=status.HTTP_501_NOT_IMPLEMENTED,
+            detail="PDF export is not available; use format=html and print-to-PDF from your browser.",
+        )
+
+    service = _get_service(current_user)
+    await _require_result_exists(forecast_id, service)
+
+    # Fetch full diagnostics bundle + the underlying forecast result
+    diagnostics = await service.get_full_diagnostics(forecast_id)
+    forecast_result = await service._fetch_result(forecast_id)
+    if diagnostics is None or forecast_result is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Diagnostics data unavailable for this forecast.",
+        )
+
+    from app.services.report_exporter import render_html
+    html = render_html(forecast_result, diagnostics)
+    filename = f"diagnostics_{forecast_id[:8]}.html"
+
+    return HTMLResponse(
+        content=html,
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )

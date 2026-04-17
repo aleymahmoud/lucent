@@ -300,3 +300,88 @@ async def export_forecast_report(
 
     report = service.generate_export_report(result)
     return report
+
+
+# ============================================
+# GET /results/{forecast_id}/export/excel
+# ============================================
+
+@router.get(
+    "/{forecast_id}/export/excel",
+    summary="Download forecast as a multi-sheet Excel file",
+    description=(
+        "Generate a .xlsx file with separate sheets for predictions, metrics, "
+        "model summary, and (if present) cross-validation results."
+    ),
+    response_class=StreamingResponse,
+)
+async def download_forecast_excel(
+    forecast_id: str,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    from app.services.excel_exporter import export_single
+
+    service = _get_service(current_user)
+    result = await _require_result(forecast_id, service, db=db)
+
+    if result.status != ForecastStatus.COMPLETED or not result.predictions:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=(
+                "Cannot export — forecast is not completed or has no predictions."
+            ),
+        )
+
+    buf = export_single(result)
+    entity = (result.entity_id or "entity").replace("/", "_")
+    filename = f"forecast_{entity}_{result.method.value}.xlsx"
+
+    return StreamingResponse(
+        buf,
+        media_type=(
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        ),
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+# ============================================
+# GET /results/batch/{batch_id}/export/excel
+# ============================================
+
+@router.get(
+    "/batch/{batch_id}/export/excel",
+    summary="Download a batch of forecasts as a multi-sheet Excel file",
+    description=(
+        "Generate a .xlsx file with a Summary sheet, combined All_Data sheet, "
+        "and one sheet per entity."
+    ),
+    response_class=StreamingResponse,
+)
+async def download_batch_excel(
+    batch_id: str,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    from app.services.excel_exporter import export_batch
+    from app.services.forecast_service import ForecastService
+
+    forecast_service = ForecastService(current_user.tenant_id, current_user.id, db=db)
+    batch = await forecast_service.get_batch_status(batch_id)
+    if batch is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Batch '{batch_id}' not found or has expired.",
+        )
+
+    buf = export_batch(batch)
+    filename = f"forecast_batch_{batch_id[:8]}.xlsx"
+
+    return StreamingResponse(
+        buf,
+        media_type=(
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        ),
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )

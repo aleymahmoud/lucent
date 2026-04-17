@@ -195,14 +195,49 @@ class ARIMAForecaster(BaseForecaster):
             }
         }
 
-        # Add coefficients if available
+        # Build detailed coefficient list (estimate + SE + z-stat + p-value + significant)
         try:
-            model_summary['coefficients'] = {
-                str(k): round(float(v), 6)
-                for k, v in self.model.params.items()
-            }
-        except Exception:
-            pass
+            coefficients = []
+            params = self.model.params
+            try:
+                bse = self.model.bse
+            except Exception:
+                bse = None
+            try:
+                tvalues = self.model.tvalues
+            except Exception:
+                tvalues = None
+            try:
+                pvalues = self.model.pvalues
+            except Exception:
+                pvalues = None
+
+            for name, est in params.items():
+                coef = {
+                    "name": str(name),
+                    "estimate": round(float(est), 6),
+                }
+                try:
+                    if bse is not None and name in bse.index:
+                        coef["std_error"] = round(float(bse[name]), 6)
+                except Exception:
+                    pass
+                try:
+                    if tvalues is not None and name in tvalues.index:
+                        coef["z_stat"] = round(float(tvalues[name]), 4)
+                except Exception:
+                    pass
+                try:
+                    if pvalues is not None and name in pvalues.index:
+                        p = float(pvalues[name])
+                        coef["p_value"] = round(p, 6)
+                        coef["significant"] = bool(p < 0.05)
+                except Exception:
+                    pass
+                coefficients.append(coef)
+            model_summary['coefficients'] = coefficients
+        except Exception as exc:
+            logger.warning(f"Failed to extract detailed coefficients: {exc}")
 
         return ForecastOutput(
             predictions=predictions,

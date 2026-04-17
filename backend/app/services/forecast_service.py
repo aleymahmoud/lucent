@@ -20,7 +20,8 @@ from app.schemas.forecast import (
     ForecastResultResponse, MetricsResponse, ModelSummaryResponse,
     PredictionResponse, MethodInfoResponse, AutoParamsResponse,
     DataCharacteristics, BatchForecastStatusResponse,
-    CrossValidationResultResponse, FrequencyDetectionResponse
+    CrossValidationResultResponse, FrequencyDetectionResponse,
+    ForecastStatisticsResponse,
 )
 from app.forecasting import ARIMAForecaster, ETSForecaster, ProphetForecaster
 from app.forecasting.frequency import detect_frequency as detect_freq, irregular_intervals_pct
@@ -315,19 +316,57 @@ class ForecastService:
             ]
 
             result.metrics = MetricsResponse(**output.metrics)
+
+            # Persist the full residuals array (truncated to last 2000) so the
+            # Diagnostics page can compute real statistical tests.
+            residuals_list: Optional[list] = None
+            if output.residuals is not None:
+                resids = np.asarray(output.residuals, dtype=float)
+                resids = resids[np.isfinite(resids)]
+                if len(resids) > 2000:
+                    resids = resids[-2000:]
+                residuals_list = [round(float(v), 6) for v in resids.tolist()]
+
+            # Convert legacy dict coefficients into the new ModelCoefficient list shape,
+            # preserving any already-list values as-is.
+            raw_coeffs = output.model_summary.get('coefficients')
+            coefficient_list = None
+            if isinstance(raw_coeffs, list):
+                coefficient_list = raw_coeffs
+            elif isinstance(raw_coeffs, dict):
+                coefficient_list = [
+                    {"name": str(k), "estimate": float(v)} for k, v in raw_coeffs.items()
+                ]
+
             result.model_summary = ModelSummaryResponse(
                 method=request.method.value,
                 parameters=output.model_summary.get('parameters', {}),
-                coefficients=output.model_summary.get('coefficients'),
+                coefficients=coefficient_list,
                 diagnostics={
                     'residual_mean': round(float(np.mean(output.residuals)), 4) if output.residuals is not None else None,
                     'residual_std': round(float(np.std(output.residuals)), 4) if output.residuals is not None else None,
                     **{k: v for k, v in output.model_summary.items() if k not in ['method', 'parameters', 'coefficients']}
                 },
-                regressors_used=list(use_exog.columns) if use_exog is not None else None
+                regressors_used=list(use_exog.columns) if use_exog is not None else None,
+                residuals=residuals_list,
             )
 
-            # --- Cross-validation (US5) ---
+            # --- Forecast Statistics (summary of predicted values) ---
+            if result.predictions:
+                values = np.array([p.value for p in result.predictions], dtype=float)
+                widths = np.array([p.upper_bound - p.lower_bound for p in result.predictions], dtype=float)
+                result.forecast_statistics = ForecastStatisticsResponse(
+                    mean=round(float(np.mean(values)), 4),
+                    median=round(float(np.median(values)), 4),
+                    min=round(float(np.min(values)), 4),
+                    max=round(float(np.max(values)), 4),
+                    q25=round(float(np.percentile(values, 25)), 4),
+                    q75=round(float(np.percentile(values, 75)), 4),
+                    iqr=round(float(np.percentile(values, 75) - np.percentile(values, 25)), 4),
+                    average_interval_width=round(float(np.mean(widths)), 4) if len(widths) else 0.0,
+                )
+
+            # --- Cross-validation (US5 of spec 001) ---
             if request.cross_validation and request.cross_validation.enabled:
                 try:
                     cv_result = self._run_cross_validation(series, request, use_exog, detected_period)

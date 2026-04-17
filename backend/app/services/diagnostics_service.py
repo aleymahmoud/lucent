@@ -66,40 +66,28 @@ class DiagnosticsService:
 
     def _extract_residuals(self, result: ForecastResultResponse) -> Optional[List[float]]:
         """
-        Attempt to retrieve residuals from the stored model_summary.diagnostics.
-        The ForecastService stores residual_mean and residual_std but not the full array.
+        Retrieve the real residuals array persisted by the ForecastService.
 
-        Strategy:
-        1. If 'residuals' key exists in diagnostics, use it directly.
-        2. Otherwise synthesise a plausible residual array from residual_mean /
-           residual_std and prediction interval widths so that downstream
-           statistics (ACF, Ljung-Box, etc.) are still meaningful.
+        Returns None when the record predates residual persistence (legacy record);
+        callers are expected to set `is_synthetic=True` and surface a banner to the
+        user rather than fabricate data.
         """
-        if result.model_summary is None or result.model_summary.diagnostics is None:
+        if result.model_summary is None:
             return None
 
-        diag = result.model_summary.diagnostics
+        # New canonical location: model_summary.residuals (Pydantic field).
+        if result.model_summary.residuals:
+            arr = [float(v) for v in result.model_summary.residuals if v is not None]
+            return arr if len(arr) >= 4 else None
 
-        # Case 1 — full residual array was stored
-        if "residuals" in diag and isinstance(diag["residuals"], list):
+        # Legacy location fallback: model_summary.diagnostics["residuals"].
+        diag = result.model_summary.diagnostics or {}
+        if isinstance(diag.get("residuals"), list):
             arr = [float(v) for v in diag["residuals"] if v is not None]
             return arr if len(arr) >= 4 else None
 
-        # Case 2 — reconstruct from summary statistics + prediction widths
-        mean = diag.get("residual_mean")
-        std = diag.get("residual_std")
-
-        if mean is None or std is None:
-            return None
-
-        mean = float(mean)
-        std = float(std)
-
-        # Use prediction count as the number of residual points
-        n = max(len(result.predictions), 10)
-        rng = np.random.default_rng(seed=42)  # reproducible
-        residuals = rng.normal(loc=mean, scale=max(std, 1e-6), size=n)
-        return residuals.tolist()
+        # No real residuals available — do NOT synthesise.
+        return None
 
     # ============================================
     # Residual Analysis
@@ -108,39 +96,58 @@ class DiagnosticsService:
     async def get_residual_analysis(
         self, forecast_id: str
     ) -> Optional[ResidualAnalysisResponse]:
-        """Compute ACF/PACF, Ljung-Box and Jarque-Bera statistics on residuals."""
+        """Compute ACF/PACF and full test battery on the real residual array.
+
+        Returns a response with `is_synthetic=True` when the forecast was saved
+        before residual persistence shipped — the frontend shows a banner
+        instructing the user to re-run the forecast.
+        """
         result = await self._fetch_result(forecast_id)
         if result is None:
             return None
 
         residuals = self._extract_residuals(result)
-        if residuals is None or len(residuals) < 4:
-            return None
+
+        # Legacy record — no real residuals available
+        if residuals is None:
+            empty = [0.0]
+            return ResidualAnalysisResponse(
+                residuals=[],
+                residual_mean=0.0,
+                residual_std=0.0,
+                acf=[],
+                pacf=[],
+                acf_confidence=0.0,
+                ljung_box={"statistic": 0.0, "p_value": 1.0},
+                jarque_bera={"statistic": 0.0, "p_value": 1.0},
+                is_white_noise=False,
+                is_synthetic=True,
+                tests=[],
+            )
 
         try:
             from statsmodels.tsa.stattools import acf as sm_acf, pacf as sm_pacf
             from statsmodels.stats.diagnostic import acorr_ljungbox
             from scipy.stats import jarque_bera as sp_jb
+            from app.forecasting.residual_tests import run_all_tests
 
             arr = np.array(residuals, dtype=float)
             n = len(arr)
             lags = min(_LAGS, n // 2 - 1)
             lags = max(lags, 1)
 
-            # ACF / PACF
             acf_vals = sm_acf(arr, nlags=lags, fft=True).tolist()
             pacf_vals = sm_pacf(arr, nlags=lags, method="ywm").tolist()
-
-            # Confidence band
             conf = 1.96 / math.sqrt(n)
 
-            # Ljung-Box test
             lb_result = acorr_ljungbox(arr, lags=[lags], return_df=True)
             lb_stat = float(lb_result["lb_stat"].iloc[-1])
             lb_pvalue = float(lb_result["lb_pvalue"].iloc[-1])
 
-            # Jarque-Bera test
             jb_stat, jb_pvalue = sp_jb(arr)
+
+            # Full battery: Ljung-Box + Breusch-Pagan + Shapiro-Wilk
+            tests = run_all_tests(arr, fitted=None)
 
             return ResidualAnalysisResponse(
                 residuals=arr.tolist(),
@@ -158,6 +165,8 @@ class DiagnosticsService:
                     "p_value": round(float(jb_pvalue), 6),
                 },
                 is_white_noise=lb_pvalue > 0.05,
+                is_synthetic=False,
+                tests=tests,
             )
 
         except Exception as e:
@@ -182,11 +191,21 @@ class DiagnosticsService:
         summary = result.model_summary
         metrics = result.metrics
 
+        # Pass coefficients through as-is — the list-of-ModelCoefficient shape
+        # is serialised directly; legacy Dict shape is also acceptable to the
+        # response schema (Dict[str, Any]).
+        coefficients_out = None
+        if summary.coefficients:
+            coefficients_out = [
+                c.model_dump() if hasattr(c, "model_dump") else c
+                for c in summary.coefficients
+            ]
+
         return ModelParametersResponse(
             method=summary.method,
             parameters=summary.parameters or {},
-            coefficients=summary.coefficients if summary.coefficients else None,
-            standard_errors=None,  # not stored currently
+            coefficients=coefficients_out,
+            standard_errors=None,  # Covered inside each coefficient now
             aic=metrics.aic if metrics else None,
             bic=metrics.bic if metrics else None,
         )

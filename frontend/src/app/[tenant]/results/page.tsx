@@ -15,6 +15,8 @@ import {
   ResultsTable,
   ModelSummaryPanel,
   ExportPanel,
+  CrossValidationPanel,
+  ForecastStatsPanel,
 } from "@/components/results";
 import { resultsApi } from "@/lib/api/endpoints";
 import { useForecastStore } from "@/stores/forecastStore";
@@ -63,9 +65,33 @@ interface RawForecastResult {
   model_summary: {
     method: string;
     parameters: Record<string, unknown>;
-    coefficients?: Record<string, number>;
+    coefficients?: Record<string, number> | Array<{
+      name: string;
+      estimate: number;
+      std_error?: number;
+      z_stat?: number;
+      p_value?: number;
+      significant?: boolean;
+    }>;
     diagnostics?: Record<string, unknown>;
+    residuals?: number[];
   };
+  cv_results?: {
+    folds: number;
+    method: string;
+    metrics_per_fold: { mae: number; rmse: number; mape: number }[];
+    average_metrics: { mae: number; rmse: number; mape: number };
+  } | null;
+  forecast_statistics?: {
+    mean: number;
+    median: number;
+    min: number;
+    max: number;
+    q25: number;
+    q75: number;
+    iqr: number;
+    average_interval_width: number;
+  } | null;
   created_at: string;
   completed_at?: string;
   error?: string;
@@ -238,13 +264,19 @@ function ResultsView({ forecastId }: { forecastId: string }) {
           </TabsTrigger>
         </TabsList>
 
-        {/* Overview — chart */}
+        {/* Overview — chart + stats + CV */}
         <TabsContent value="overview" className="space-y-6">
           <ForecastChart
             predictions={result.predictions}
             entityId={result.entityId}
             method={result.method}
           />
+          {raw.forecast_statistics && (
+            <ForecastStatsPanel stats={raw.forecast_statistics} />
+          )}
+          {raw.cv_results && (
+            <CrossValidationPanel cvResults={raw.cv_results} />
+          )}
         </TabsContent>
 
         {/* Data — paginated predictions table */}

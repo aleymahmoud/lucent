@@ -9,6 +9,15 @@ from typing import Optional, List, Dict, Any
 # Residual Analysis
 # ============================================
 
+class ResidualTestResult(BaseModel):
+    """Single statistical-test outcome with plain-English interpretation."""
+    test_name: str               # "Ljung-Box" | "Breusch-Pagan" | "Shapiro-Wilk"
+    statistic: float
+    p_value: float
+    interpretation: str
+    passes: bool                 # convenience: p_value > 0.05
+
+
 class ResidualAnalysisResponse(BaseModel):
     """Residual diagnostics — randomness and distribution of forecast errors"""
     residuals: List[float]
@@ -20,6 +29,10 @@ class ResidualAnalysisResponse(BaseModel):
     ljung_box: Dict[str, float]  # {"statistic": float, "p_value": float}
     jarque_bera: Dict[str, float]  # {"statistic": float, "p_value": float}
     is_white_noise: bool        # True when ljung_box p_value > 0.05
+    # NEW: True when no real residuals available (legacy record); UI shows a banner.
+    is_synthetic: bool = False
+    # NEW: Full test battery (Ljung-Box + Breusch-Pagan + Shapiro-Wilk)
+    tests: List[ResidualTestResult] = []
 
 
 # ============================================

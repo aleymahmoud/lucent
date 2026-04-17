@@ -15,13 +15,36 @@ import {
 // Types
 // -------------------------------------------------------
 
+interface ModelCoefficient {
+  name: string;
+  estimate: number;
+  std_error?: number;
+  z_stat?: number;
+  p_value?: number;
+  significant?: boolean;
+}
+
 interface ModelParametersPanelProps {
   method: string;
   parameters: Record<string, unknown>;
-  coefficients?: Record<string, number> | null;
+  coefficients?: Record<string, number> | ModelCoefficient[] | null;
   standardErrors?: Record<string, number> | null;
   aic?: number | null;
   bic?: number | null;
+}
+
+// Normalize either legacy Dict<str, float> or new ModelCoefficient[] into the new shape.
+function normaliseCoefficients(
+  coeffs: Record<string, number> | ModelCoefficient[] | null | undefined,
+  standardErrors?: Record<string, number> | null,
+): ModelCoefficient[] {
+  if (!coeffs) return [];
+  if (Array.isArray(coeffs)) return coeffs;
+  return Object.entries(coeffs).map(([name, estimate]) => ({
+    name,
+    estimate,
+    std_error: standardErrors?.[name],
+  }));
 }
 
 // -------------------------------------------------------
@@ -64,8 +87,12 @@ export function ModelParametersPanel({
   bic,
 }: ModelParametersPanelProps) {
   const paramEntries = Object.entries(parameters ?? {});
-  const coeffEntries = Object.entries(coefficients ?? {});
-  const hasCoefficients = coeffEntries.length > 0;
+  const coeffs = normaliseCoefficients(coefficients, standardErrors);
+  const hasCoefficients = coeffs.length > 0;
+  const hasStdErrors = coeffs.some((c) => c.std_error != null);
+  const hasZStats = coeffs.some((c) => c.z_stat != null);
+  const hasPValues = coeffs.some((c) => c.p_value != null);
+  const isProphet = method.toLowerCase() === "prophet";
 
   return (
     <Card>
@@ -107,34 +134,54 @@ export function ModelParametersPanel({
           </div>
         )}
 
-        {/* Coefficients table */}
-        {hasCoefficients && (
+        {/* Coefficients table (ARIMA/ETS only; Prophet uses hyperparameter grid above) */}
+        {hasCoefficients && !isProphet && (
           <div>
             <h4 className="mb-2 text-sm font-semibold">Coefficients</h4>
             <Table>
               <TableHeader>
                 <TableRow>
-                  <TableHead>Coefficient</TableHead>
-                  <TableHead className="text-right">Value</TableHead>
-                  {standardErrors && Object.keys(standardErrors).length > 0 && (
-                    <TableHead className="text-right">Std. Error</TableHead>
-                  )}
+                  <TableHead>Name</TableHead>
+                  <TableHead className="text-right">Estimate</TableHead>
+                  {hasStdErrors && <TableHead className="text-right">Std. Error</TableHead>}
+                  {hasZStats && <TableHead className="text-right">z-stat</TableHead>}
+                  {hasPValues && <TableHead className="text-right">p-value</TableHead>}
+                  {hasPValues && <TableHead className="text-right">Sig.</TableHead>}
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {coeffEntries.map(([name, value]) => (
-                  <TableRow key={name}>
+                {coeffs.map((c) => (
+                  <TableRow key={c.name}>
                     <TableCell className="font-medium capitalize">
-                      {name.replace(/_/g, " ")}
+                      {c.name.replace(/_/g, " ")}
                     </TableCell>
-                    <TableCell className="text-right font-mono">
-                      {typeof value === "number" ? value.toFixed(4) : String(value)}
+                    <TableCell className="text-right font-mono tabular-nums">
+                      {c.estimate.toFixed(4)}
                     </TableCell>
-                    {standardErrors && Object.keys(standardErrors).length > 0 && (
-                      <TableCell className="text-right font-mono text-muted-foreground">
-                        {standardErrors[name] != null
-                          ? standardErrors[name].toFixed(4)
-                          : "--"}
+                    {hasStdErrors && (
+                      <TableCell className="text-right font-mono tabular-nums text-muted-foreground">
+                        {c.std_error != null ? c.std_error.toFixed(4) : "—"}
+                      </TableCell>
+                    )}
+                    {hasZStats && (
+                      <TableCell className="text-right font-mono tabular-nums text-muted-foreground">
+                        {c.z_stat != null ? c.z_stat.toFixed(3) : "—"}
+                      </TableCell>
+                    )}
+                    {hasPValues && (
+                      <TableCell className="text-right font-mono tabular-nums">
+                        {c.p_value != null ? c.p_value.toFixed(4) : "—"}
+                      </TableCell>
+                    )}
+                    {hasPValues && (
+                      <TableCell className="text-right">
+                        {c.p_value == null ? (
+                          <span className="text-xs text-muted-foreground">—</span>
+                        ) : c.significant ? (
+                          <Badge variant="default" className="text-[10px]">Sig.</Badge>
+                        ) : (
+                          <Badge variant="outline" className="text-[10px] text-muted-foreground">Not sig.</Badge>
+                        )}
                       </TableCell>
                     )}
                   </TableRow>

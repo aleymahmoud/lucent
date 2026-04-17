@@ -4,3 +4,5 @@ export { ForecastChart } from './ForecastChart';
 export { ResultsTable } from './ResultsTable';
 export { ModelSummaryPanel } from './ModelSummaryPanel';
 export { ExportPanel } from './ExportPanel';
+export { CrossValidationPanel } from './CrossValidationPanel';
+export { ForecastStatsPanel } from './ForecastStatsPanel';

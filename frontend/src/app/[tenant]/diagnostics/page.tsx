@@ -9,12 +9,15 @@ import { Badge } from "@/components/ui/badge";
 import {
   Loader2,
   AlertCircle,
+  AlertTriangle,
   Activity,
   BarChart3,
   Waves,
   Settings2,
   Gauge,
   Play,
+  CheckCircle2,
+  XCircle,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
@@ -24,6 +27,8 @@ import {
   QualityGauge,
   SeasonalityPanel,
   ModelParametersPanel,
+  ModelComparisonPanel,
+  DiagnosticsExportPanel,
 } from "@/components/diagnostics";
 import { diagnosticsApi } from "@/lib/api/endpoints";
 import { useForecastStore } from "@/stores/forecastStore";
@@ -45,6 +50,14 @@ const queryClient = new QueryClient({
 // Raw API shape (snake_case from backend)
 // -------------------------------------------------------
 
+interface RawResidualTestResult {
+  test_name: string;
+  statistic: number;
+  p_value: number;
+  interpretation: string;
+  passes: boolean;
+}
+
 interface RawResidualAnalysis {
   residuals: number[];
   acf: number[];
@@ -59,6 +72,8 @@ interface RawResidualAnalysis {
     p_value: number;
   };
   is_white_noise: boolean;
+  is_synthetic?: boolean;
+  tests?: RawResidualTestResult[];
 }
 
 interface RawModelParameters {
@@ -160,11 +175,14 @@ function DiagnosticsView({ forecastId }: { forecastId: string }) {
   return (
     <div className="space-y-6">
       {/* Header metadata row */}
-      <div className="flex flex-wrap items-center gap-2">
-        <Badge variant="default">Diagnostics</Badge>
-        {parameters?.method && (
-          <Badge variant="outline" className="uppercase">{parameters.method}</Badge>
-        )}
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div className="flex flex-wrap items-center gap-2">
+          <Badge variant="default">Diagnostics</Badge>
+          {parameters?.method && (
+            <Badge variant="outline" className="uppercase">{parameters.method}</Badge>
+          )}
+        </div>
+        <DiagnosticsExportPanel forecastId={forecastId} />
       </div>
 
       {/* Quality gauges — always visible above tabs */}
@@ -191,11 +209,28 @@ function DiagnosticsView({ forecastId }: { forecastId: string }) {
             <Gauge className="h-4 w-4" />
             Quality
           </TabsTrigger>
+          <TabsTrigger value="compare" className="gap-2">
+            <BarChart3 className="h-4 w-4" />
+            Compare
+          </TabsTrigger>
         </TabsList>
 
-        {/* Residuals tab — scatter plot + ACF/PACF */}
+        {/* Residuals tab — banner (if historical), scatter, ACF, tests */}
         <TabsContent value="residuals" className="space-y-6">
-          {residuals ? (
+          {residuals?.is_synthetic && (
+            <div className="flex items-start gap-3 rounded-md border border-orange-200 bg-orange-50 p-4 text-sm dark:border-orange-800 dark:bg-orange-950/20">
+              <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0 text-orange-600 dark:text-orange-400" />
+              <div>
+                <p className="font-medium text-foreground">Residual detail unavailable for this historical record</p>
+                <p className="mt-1 text-muted-foreground">
+                  This forecast was created before residual diagnostics became available. Re-run the forecast
+                  to see complete residual analysis including ACF, Ljung-Box, Breusch-Pagan, and Shapiro-Wilk tests.
+                </p>
+              </div>
+            </div>
+          )}
+
+          {residuals && !residuals.is_synthetic ? (
             <>
               <ResidualChart
                 residuals={residuals.residuals}
@@ -208,14 +243,44 @@ function DiagnosticsView({ forecastId }: { forecastId: string }) {
                 pacf={residuals.pacf}
                 acfConfidence={residuals.acf_confidence}
               />
+              {residuals.tests && residuals.tests.length > 0 && (
+                <Card>
+                  <CardContent className="p-4 space-y-3">
+                    <h3 className="font-medium text-sm">Residual Tests</h3>
+                    <div className="space-y-2">
+                      {residuals.tests.map((t, i) => (
+                        <div key={i} className="flex items-start gap-3 rounded-md border p-3">
+                          {t.passes ? (
+                            <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-green-600" />
+                          ) : (
+                            <XCircle className="mt-0.5 h-4 w-4 shrink-0 text-destructive" />
+                          )}
+                          <div className="flex-1 min-w-0">
+                            <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
+                              <span className="font-medium text-sm">{t.test_name}</span>
+                              <span className="text-xs text-muted-foreground tabular-nums">
+                                stat = {Number.isFinite(t.statistic) ? t.statistic.toFixed(3) : "—"}
+                              </span>
+                              <span className="text-xs text-muted-foreground tabular-nums">
+                                p = {Number.isFinite(t.p_value) ? t.p_value.toFixed(4) : "—"}
+                              </span>
+                            </div>
+                            <p className="mt-1 text-xs text-muted-foreground">{t.interpretation}</p>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </CardContent>
+                </Card>
+              )}
             </>
-          ) : (
+          ) : !residuals ? (
             <Card>
               <CardContent className="flex h-48 items-center justify-center">
                 <p className="text-muted-foreground">No residual analysis available.</p>
               </CardContent>
             </Card>
-          )}
+          ) : null}
         </TabsContent>
 
         {/* Seasonality tab */}
@@ -292,6 +357,11 @@ function DiagnosticsView({ forecastId }: { forecastId: string }) {
               </CardContent>
             </Card>
           )}
+        </TabsContent>
+
+        {/* Compare tab — multi-model comparison */}
+        <TabsContent value="compare" className="space-y-6">
+          <ModelComparisonPanel currentForecastId={forecastId} />
         </TabsContent>
       </Tabs>
     </div>

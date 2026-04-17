@@ -166,13 +166,40 @@ class MetricsResponse(BaseModel):
     bic: Optional[float] = Field(None, description="Bayesian Information Criterion")
 
 
+class ModelCoefficient(BaseModel):
+    """Detailed per-coefficient statistics (ARIMA/ETS)."""
+    name: str
+    estimate: float
+    std_error: Optional[float] = None
+    z_stat: Optional[float] = None
+    p_value: Optional[float] = None
+    significant: Optional[bool] = None
+
+
 class ModelSummaryResponse(BaseModel):
     """Model summary and parameters"""
     method: str
     parameters: Dict[str, Any]
-    coefficients: Optional[Dict[str, float]] = None
+    # New shape: list of ModelCoefficient objects. Legacy Dict[str, float] still accepted
+    # on read for backward compat (handled in service layer).
+    coefficients: Optional[List[ModelCoefficient]] = None
     diagnostics: Optional[Dict[str, Any]] = None
     regressors_used: Optional[List[str]] = None
+    # Full residuals array, truncated to last 2000 values. Populated for fresh forecasts,
+    # null for historical records written before this feature shipped.
+    residuals: Optional[List[float]] = None
+
+
+class ForecastStatisticsResponse(BaseModel):
+    """Summary statistics of the forecasted values (for Results page panel)."""
+    mean: float
+    median: float
+    min: float
+    max: float
+    q25: float
+    q75: float
+    iqr: float
+    average_interval_width: float
 
 
 class CrossValidationResultResponse(BaseModel):
@@ -203,6 +230,9 @@ class ForecastResultResponse(BaseModel):
     # Frequency detection (populated on every run)
     detected_frequency: Optional[str] = None  # "D" | "W" | "M" | "Q" | "Y"
     detected_seasonal_period: Optional[int] = None
+
+    # Summary statistics of forecasted values (mean/median/quartiles/IQR/avg width)
+    forecast_statistics: Optional[ForecastStatisticsResponse] = None
 
     # Non-fatal advisories surfaced during execution
     warnings: List[str] = []

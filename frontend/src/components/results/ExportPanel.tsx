@@ -4,7 +4,7 @@ import { useState } from "react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Download, FileJson, Loader2, CheckCircle2, AlertCircle } from "lucide-react";
+import { Download, FileJson, FileSpreadsheet, Loader2, CheckCircle2 } from "lucide-react";
 import { toast } from "sonner";
 import { resultsApi } from "@/lib/api/endpoints";
 
@@ -54,6 +54,7 @@ export function ExportPanel({
 }: ExportPanelProps) {
   const [csvLoading, setCsvLoading] = useState(false);
   const [jsonLoading, setJsonLoading] = useState(false);
+  const [xlsxLoading, setXlsxLoading] = useState(false);
 
   // -- CSV download --
   // The backend returns a streamed file; we open the URL directly so the
@@ -91,6 +92,34 @@ export function ExportPanel({
       });
     } finally {
       setCsvLoading(false);
+    }
+  };
+
+  // -- Excel download --
+  const handleDownloadExcel = async () => {
+    setXlsxLoading(true);
+    try {
+      const token = typeof window !== "undefined" ? localStorage.getItem("token") : null;
+      const res = await fetch(`${API_BASE}/results/${forecastId}/export/excel`, {
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      });
+      if (!res.ok) throw new Error(`Server responded with ${res.status}`);
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `forecast-${forecastId}.xlsx`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+      toast.success("Excel downloaded successfully");
+    } catch (err) {
+      toast.error("Download failed", {
+        description: err instanceof Error ? err.message : "Unknown error",
+      });
+    } finally {
+      setXlsxLoading(false);
     }
   };
 
@@ -190,7 +219,7 @@ export function ExportPanel({
               size="sm"
               className="ml-4 shrink-0"
               onClick={handleDownloadCSV}
-              disabled={csvLoading || jsonLoading}
+              disabled={csvLoading || jsonLoading || xlsxLoading}
             >
               {csvLoading ? (
                 <Loader2 className="h-4 w-4 mr-2 animate-spin" />
@@ -198,6 +227,31 @@ export function ExportPanel({
                 <Download className="h-4 w-4 mr-2" />
               )}
               {csvLoading ? "Downloading..." : "Download CSV"}
+            </Button>
+          </div>
+
+          {/* Excel (multi-sheet) */}
+          <div className="flex items-start justify-between rounded-lg border p-4">
+            <div className="space-y-1">
+              <p className="font-medium text-sm">Excel (multi-sheet)</p>
+              <p className="text-sm text-muted-foreground">
+                Download an .xlsx file with separate sheets for predictions, metrics, model summary,
+                and cross-validation results.
+              </p>
+            </div>
+            <Button
+              variant="outline"
+              size="sm"
+              className="ml-4 shrink-0"
+              onClick={handleDownloadExcel}
+              disabled={csvLoading || jsonLoading || xlsxLoading}
+            >
+              {xlsxLoading ? (
+                <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+              ) : (
+                <FileSpreadsheet className="h-4 w-4 mr-2" />
+              )}
+              {xlsxLoading ? "Downloading..." : "Download Excel"}
             </Button>
           </div>
 
@@ -215,7 +269,7 @@ export function ExportPanel({
               size="sm"
               className="ml-4 shrink-0"
               onClick={handleExportReport}
-              disabled={csvLoading || jsonLoading}
+              disabled={csvLoading || jsonLoading || xlsxLoading}
             >
               {jsonLoading ? (
                 <Loader2 className="h-4 w-4 mr-2 animate-spin" />
