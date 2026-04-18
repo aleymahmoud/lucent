@@ -2,7 +2,7 @@
 Diagnostics Schemas - Pydantic models for forecast diagnostic analysis
 """
 from pydantic import BaseModel, Field
-from typing import Optional, List, Dict, Any
+from typing import Optional, List, Dict, Any, Union
 
 
 # ============================================
@@ -40,10 +40,15 @@ class ResidualAnalysisResponse(BaseModel):
 # ============================================
 
 class ModelParametersResponse(BaseModel):
-    """Extracted model parameters and information criteria"""
+    """Extracted model parameters and information criteria.
+
+    `coefficients` accepts either the legacy Dict[str, float] shape or the
+    spec-002 list shape (List[{name, estimate, std_error, z_stat, p_value,
+    significant}]).  The frontend `ModelParametersPanel` handles both.
+    """
     method: str
     parameters: Dict[str, Any]
-    coefficients: Optional[Dict[str, Any]] = None
+    coefficients: Optional[Union[List[Dict[str, Any]], Dict[str, Any]]] = None
     standard_errors: Optional[Dict[str, Any]] = None
     aic: Optional[float] = None
     bic: Optional[float] = None

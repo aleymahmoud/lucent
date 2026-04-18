@@ -131,7 +131,14 @@ def make_benchmark_suite() -> dict[str, pd.Series]:
     datasets["monthly_ys_24"] = monthly_yearly_seasonal(n=24, seed=13)
 
     # Monthly trend-only
-    datasets["monthly_trend_36"] = pure_trend(n=36, slope=1.0, noise_scale=1.0, seed=14).asfreq("MS").fillna(method="ffill")
+    # Pure trend at a monthly cadence (constructed directly so we keep 36 rows)
+    _rng14 = np.random.default_rng(14)
+    _monthly_trend_index = pd.date_range("2022-01-01", periods=36, freq="MS")
+    datasets["monthly_trend_36"] = pd.Series(
+        100.0 + np.arange(36) + _rng14.standard_normal(36),
+        index=_monthly_trend_index,
+        name="value",
+    )
 
     # Larger daily datasets
     datasets["daily_ws_730"] = daily_weekly_seasonal(n=730, seed=15)
