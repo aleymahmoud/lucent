@@ -5,7 +5,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
-from datetime import datetime
+from datetime import datetime, timedelta
 import uuid
 
 from app.core.deps import get_db, get_current_active_user
@@ -234,10 +234,25 @@ async def tenant_login(
             detail="Your account is pending approval. Please wait for an administrator to approve your registration."
         )
 
-    # Update last login
-    user.last_login = datetime.utcnow()
-    await db.commit()
-    await db.refresh(user)
+    # Update last login (only after full success; skip when MFA required)
+    if not user.mfa_enabled:
+        user.last_login = datetime.utcnow()
+        await db.commit()
+        await db.refresh(user)
+
+    # MFA gate — spec 003 P3
+    if user.mfa_enabled:
+        # Short-lived challenge token; client exchanges it via /auth/mfa/challenge
+        challenge_token = create_access_token(
+            data={"sub": user.id, "type": "mfa_challenge"},
+            expires_delta=timedelta(minutes=5),
+        )
+        return AuthResponse(
+            access_token=challenge_token,
+            token_type="bearer",
+            user=build_user_response(user, tenant.slug),
+            require_mfa=True,
+        )
 
     # Create access token
     access_token = create_access_token(data={"sub": user.id})
@@ -245,7 +260,7 @@ async def tenant_login(
     return AuthResponse(
         access_token=access_token,
         token_type="bearer",
-        user=build_user_response(user, tenant.slug)
+        user=build_user_response(user, tenant.slug),
     )
 
 

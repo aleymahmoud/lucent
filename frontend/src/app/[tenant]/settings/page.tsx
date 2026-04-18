@@ -9,7 +9,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useAuth } from "@/contexts/AuthContext";
 import { userApi } from "@/lib/api/endpoints";
-import { Users, UsersRound, Link2, Palette, Settings, KeyRound, Loader2, CheckCircle2, AlertCircle, ScrollText, Gauge } from "lucide-react";
+import { Users, UsersRound, Link2, Palette, Settings, KeyRound, Loader2, CheckCircle2, AlertCircle, ScrollText, Gauge, ShieldCheck } from "lucide-react";
 import { toast } from "sonner";
 
 const settingsItems = [
@@ -54,6 +54,20 @@ const settingsItems = [
     href: "/settings/usage",
     icon: Gauge,
     adminOnly: true,
+  },
+  {
+    name: "Security (2FA)",
+    description: "Enable two-factor authentication for your account",
+    href: "/settings/security",
+    icon: ShieldCheck,
+    adminOnly: false,
+  },
+  {
+    name: "API Keys",
+    description: "Personal bearer tokens for programmatic access",
+    href: "/settings/api-keys",
+    icon: KeyRound,
+    adminOnly: false,
   },
 ];
 

@@ -55,3 +55,7 @@ class AuthResponse(BaseModel):
     access_token: str
     token_type: str = "bearer"
     user: UserResponse
+    # Spec 003 P3: when set, client must call /auth/mfa/challenge with these
+    # before gaining a real session. The access_token above is the challenge
+    # token in that case (type=mfa_challenge, short TTL).
+    require_mfa: bool = False

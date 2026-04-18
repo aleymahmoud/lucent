@@ -30,19 +30,40 @@ async def get_current_user(
     credentials: HTTPAuthorizationCredentials = Depends(security),
     db: AsyncSession = Depends(get_db)
 ) -> User:
-    """Get current authenticated user from JWT token"""
+    """Get current authenticated user from JWT token OR personal API key.
+
+    API keys look like `lucent_<base62 chars>`. JWT tokens don't have that
+    prefix, so we try the API-key path first only when the prefix matches.
+    """
     credentials_exception = HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
         detail="Could not validate credentials",
         headers={"WWW-Authenticate": "Bearer"},
     )
 
-    # Decode token
     token = credentials.credentials
+
+    # API-key path (spec 003 P3)
+    if token.startswith("lucent_"):
+        from app.services import api_key_service
+        user = await api_key_service.authenticate(db, token)
+        if user is None:
+            raise credentials_exception
+        return user
+
+    # JWT path
     payload = decode_access_token(token)
 
     if payload is None:
         raise credentials_exception
+
+    # Reject MFA-challenge tokens — they must be exchanged via /auth/mfa/challenge
+    if payload.get("type") == "mfa_challenge":
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="MFA challenge incomplete. Submit your TOTP code.",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
 
     user_id: str = payload.get("sub")
     if user_id is None:

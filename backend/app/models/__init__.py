@@ -14,6 +14,7 @@ from app.models.connector_data_source import ConnectorDataSource
 from app.models.data_snapshot import DataSnapshot, SnapshotStatus
 from app.models.forecast_prediction import ForecastPrediction
 from app.models.invite import Invite
+from app.models.api_key import ApiKey
 
 __all__ = [
     "Tenant",
@@ -34,4 +35,5 @@ __all__ = [
     "SnapshotStatus",
     "ForecastPrediction",
     "Invite",
+    "ApiKey",
 ]

@@ -45,6 +45,11 @@ class User(Base):
     is_active = Column(Boolean, default=True, index=True)
     is_approved = Column(Boolean, default=False, index=True)  # Requires admin approval
 
+    # MFA (spec 003 P3)
+    mfa_secret = Column(String(64), nullable=True)            # encrypted base32 TOTP secret
+    mfa_enabled = Column(Boolean, default=False, nullable=False, server_default="false")
+    mfa_backup_codes = Column(JSON, nullable=True)            # list of SHA-256 hex strings
+
     # Relationships
     tenant = relationship("Tenant", back_populates="users")
     created_connectors = relationship("Connector", back_populates="creator", foreign_keys="Connector.created_by")
